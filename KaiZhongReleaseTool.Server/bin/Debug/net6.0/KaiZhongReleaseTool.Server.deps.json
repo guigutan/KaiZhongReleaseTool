@@ -1,0 +1,39 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v6.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v6.0": {
+      "KaiZhongReleaseTool.Server/1.0.0": {
+        "dependencies": {
+          "KaiZhongReleaseTool.Shared": "1.0.0"
+        },
+        "runtime": {
+          "KaiZhongReleaseTool.Server.dll": {}
+        }
+      },
+      "KaiZhongReleaseTool.Shared/1.0.0": {
+        "runtime": {
+          "KaiZhongReleaseTool.Shared.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "KaiZhongReleaseTool.Server/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "KaiZhongReleaseTool.Shared/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

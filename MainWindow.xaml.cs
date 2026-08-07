@@ -9,6 +9,7 @@ using System.Collections.ObjectModel;
 using Microsoft.Data.Sqlite;
 using System.Diagnostics;
 using System.Windows.Media;
+using System.Windows.Documents;
 
 namespace KaiZhongReleaseTool;
 
@@ -26,6 +27,9 @@ public partial class MainWindow : Window
     private readonly List<ServerProfile> _allServers = new();
     private readonly ObservableCollection<ServerProfile> _servers = new();
     private ServerProfile? _selectedServer;
+    private CancellationTokenSource? _pathDetectionCts;
+    private string[]? _resolvedOutputPaths;
+    private static readonly string[] DllProjectNames = { "SIE.ScheduleServer", "SIE.WebApiHost", "WebClient", "WpfClient" };
 
     /// <summary>初始化指令列表，并默认选择文件复制操作。</summary>
     public MainWindow()
@@ -106,7 +110,6 @@ public partial class MainWindow : Window
             ResultTextBox.Text = "请先在服务器列表中选择一台服务器。";
             return;
         }
-        SendButton.IsEnabled = false;
         ResultTextBox.Text = "正在执行...";
         try
         {
@@ -119,7 +122,7 @@ public partial class MainWindow : Window
                 ServiceName = ServiceNameTextBox.Text
             };
             // 统一补上末尾斜杠，避免用户输入不同格式时拼接出错误地址。
-            var baseUrl = ServerUrlTextBox.Text.TrimEnd('/') + "/";
+            var baseUrl = _selectedServer.BaseUrl;
             if (command.Type == CommandType.FolderUpload)
             {
                 await UploadFolderAsync(baseUrl, command);
@@ -141,7 +144,6 @@ public partial class MainWindow : Window
             }
         }
         catch (Exception ex) { ResultTextBox.Text = $"请求失败：{ex.Message}"; }
-        finally { SendButton.IsEnabled = true; }
     }
 
     /// <summary>根据指令类型启用所需输入项，减少无效参数输入。</summary>
@@ -238,8 +240,6 @@ public partial class MainWindow : Window
     private void ServerDataGrid_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         _selectedServer = ServerDataGrid.SelectedItem as ServerProfile;
-        ServerUrlTextBox.Text = _selectedServer?.BaseUrl ?? "请先新增并选择服务器";
-        SendButton.IsEnabled = _selectedServer is not null;
     }
 
     /// <summary>右键某一行时先选中该行，确保菜单操作对应用户点击的服务器。</summary>
@@ -420,5 +420,348 @@ public partial class MainWindow : Window
         process.WaitForExit();
         if (requireSuccess && process.ExitCode != 0)
             throw new InvalidOperationException("新增或修改 Windows 远程桌面凭据失败。");
+    }
+
+    /// <summary>项目路径变化后延迟识别，避免用户每输入一个字符就扫描磁盘。</summary>
+    private async void SmomProjectPathTextBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        if (!IsInitialized) return;
+        _pathDetectionCts?.Cancel();
+        _pathDetectionCts?.Dispose();
+        _pathDetectionCts = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(350, _pathDetectionCts.Token);
+            await ResolveSmomPathsAsync(_pathDetectionCts.Token);
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    /// <summary>允许用户通过系统文件夹选择器填写 SMOM 项目路径。</summary>
+    private void SelectSmomFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new System.Windows.Forms.FolderBrowserDialog
+        {
+            Description = "请选择 SMOM 项目目录或其相关项目目录",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = false,
+            SelectedPath = Directory.Exists(SmomProjectPathTextBox.Text) ? SmomProjectPathTextBox.Text : string.Empty
+        };
+        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+            SmomProjectPathTextBox.Text = dialog.SelectedPath;
+    }
+
+    /// <summary>双击顶部提示文字时，用资源管理器打开当前程序所在文件夹。</summary>
+    private void OpenProgramFolder_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2) return;
+        var explorer = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
+        explorer.ArgumentList.Add(AppContext.BaseDirectory);
+        Process.Start(explorer);
+        e.Handled = true;
+    }
+
+    /// <summary>校验 SMOMDLL 中存在 DLL 后，打开支持全选和多选的服务器选择窗口。</summary>
+    private void PublishToServerButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dllRoot = Path.Combine(AppContext.BaseDirectory, "SMOMDLL");
+        string[] dllFiles;
+        try
+        {
+            dllFiles = Directory.Exists(dllRoot)
+                ? Directory.GetFiles(dllRoot, "*.dll", SearchOption.AllDirectories)
+                : Array.Empty<string>();
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show($"读取 SMOMDLL 文件夹失败：{ex.Message}", "发布到服务器", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (dllFiles.Length == 0)
+        {
+            System.Windows.MessageBox.Show("SMOMDLL 文件夹及其子文件夹中没有 DLL 文件，请先获取 DLL。", "发布到服务器", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (_allServers.Count == 0)
+        {
+            System.Windows.MessageBox.Show("服务器列表为空，请先新增服务器。", "发布到服务器", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var dialog = new PublishServerSelectionWindow(_allServers) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        ResultTextBox.Text = $"已准备 {dllFiles.Length} 个 DLL。{Environment.NewLine}" +
+            $"已选择 {dialog.SelectedServers.Count} 台服务器：{Environment.NewLine}" +
+            string.Join(Environment.NewLine, dialog.SelectedServers.Select(server => $"- {server.Name}（{server.Host}）")) +
+            $"{Environment.NewLine}{Environment.NewLine}服务器选择已完成，实际发布功能将在后续步骤中接入。";
+    }
+
+    /// <summary>根据所选模式收集 DLL，并复制到程序目录下对应的 SMOMDLL 子目录。</summary>
+    private async void GetDllButton_Click(object sender, RoutedEventArgs e)
+    {
+        _pathDetectionCts?.Cancel();
+        _pathDetectionCts = new CancellationTokenSource();
+        try
+        {
+            await ResolveSmomPathsAsync(_pathDetectionCts.Token);
+            if (_resolvedOutputPaths is null)
+            {
+                ResultTextBox.Text = "未能识别 SMOM 项目路径，无法获取 DLL。";
+                return;
+            }
+
+            var specifiedMode = SpecifiedDllRadioButton.IsChecked == true;
+            var specifiedNames = specifiedMode ? ReadSpecifiedDllNames(createWhenMissing: true) : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (specifiedMode && specifiedNames.Count == 0)
+            {
+                DllCountTextBlock.Text = "待获取：0 个";
+                ResultTextBox.Text = $"GetDLL.txt 内容为空，请先填写需要获取的 DLL 文件名。{Environment.NewLine}{GetDllListFilePath()}";
+                return;
+            }
+
+            var targetDirectories = PrepareDllTargetDirectories();
+            var requestedCount = specifiedMode ? specifiedNames.Count : 0;
+            var copiedCount = 0;
+            var missingCount = 0;
+            var summary = new List<string>();
+            for (var index = 0; index < _resolvedOutputPaths.Length; index++)
+            {
+                var sourceDirectory = _resolvedOutputPaths[index];
+                var projectName = DllProjectNames[index];
+                if (!Directory.Exists(sourceDirectory))
+                {
+                    summary.Add($"【{projectName}】源目录不存在，复制 0 个");
+                    if (specifiedMode) missingCount += specifiedNames.Count;
+                    continue;
+                }
+
+                var sourceFiles = Directory.GetFiles(sourceDirectory, "*.dll", SearchOption.TopDirectoryOnly);
+                var filesToCopy = specifiedMode
+                    ? sourceFiles.Where(file => specifiedNames.Contains(Path.GetFileName(file))).ToArray()
+                    : sourceFiles.Where(file => Path.GetFileName(file).StartsWith("SIE", StringComparison.OrdinalIgnoreCase)).ToArray();
+                if (!specifiedMode) requestedCount += filesToCopy.Length;
+                foreach (var sourceFile in filesToCopy)
+                {
+                    File.Copy(sourceFile, Path.Combine(targetDirectories[index], Path.GetFileName(sourceFile)), overwrite: true);
+                    copiedCount++;
+                }
+                if (specifiedMode) missingCount += specifiedNames.Count - filesToCopy.Length;
+                summary.Add($"【{projectName}】复制 {filesToCopy.Length} 个 DLL 到 {targetDirectories[index]}");
+            }
+            DllCountTextBlock.Text = $"汇总：{copiedCount} 个";
+            summary.Insert(0, specifiedMode
+                ? $"指定 DLL：{specifiedNames.Count} 种；实际复制：{copiedCount} 个；四个项目累计缺失：{missingCount} 个"
+                : $"全量 SIE DLL：共复制 {copiedCount} 个");
+            ResultTextBox.Text = string.Join(Environment.NewLine, summary);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { ResultTextBox.Text = $"获取 DLL 失败：{ex.Message}"; }
+    }
+
+    /// <summary>切换获取模式时立即更新预计 DLL 数量。</summary>
+    private void DllModeRadioButton_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!IsInitialized) return;
+        UpdateDllCountPreview();
+    }
+
+    /// <summary>根据当前模式计算待获取数量，指定模式按去重文件名计数，全量模式按实际文件计数。</summary>
+    private void UpdateDllCountPreview()
+    {
+        try
+        {
+            int count;
+            if (SpecifiedDllRadioButton.IsChecked == true)
+                count = ReadSpecifiedDllNames(createWhenMissing: false).Count;
+            else if (_resolvedOutputPaths is null)
+                count = 0;
+            else
+                count = _resolvedOutputPaths.Where(Directory.Exists).Sum(path =>
+                    Directory.GetFiles(path, "*.dll", SearchOption.TopDirectoryOnly)
+                        .Count(file => Path.GetFileName(file).StartsWith("SIE", StringComparison.OrdinalIgnoreCase)));
+            DllCountTextBlock.Text = $"待获取：{count} 个";
+        }
+        catch { DllCountTextBlock.Text = "待获取：无法统计"; }
+    }
+
+    /// <summary>读取 GetDLL.txt，自动补全扩展名并按不区分大小写方式去重。</summary>
+    private static HashSet<string> ReadSpecifiedDllNames(bool createWhenMissing)
+    {
+        var filePath = GetDllListFilePath();
+        if (!File.Exists(filePath))
+        {
+            if (createWhenMissing) File.WriteAllText(filePath, string.Empty);
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rawLine in File.ReadLines(filePath))
+        {
+            var name = Path.GetFileName(rawLine.Trim());
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            if (!name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)) name += ".dll";
+            result.Add(name);
+        }
+        return result;
+    }
+
+    /// <summary>返回与当前程序同级的 DLL 清单文件路径。</summary>
+    private static string GetDllListFilePath() => Path.Combine(AppContext.BaseDirectory, "GetDLL.txt");
+
+    /// <summary>清空并重新创建四个 DLL 目标目录；目录被占用时抛出明确错误。</summary>
+    private static string[] PrepareDllTargetDirectories()
+    {
+        var root = Path.Combine(AppContext.BaseDirectory, "SMOMDLL");
+        Directory.CreateDirectory(root);
+        var targets = DllProjectNames.Select(name => Path.Combine(root, name)).ToArray();
+        foreach (var target in targets)
+        {
+            if (Directory.Exists(target))
+            {
+                try { Directory.Delete(target, recursive: true); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    throw new IOException($"无法清空目录“{target}”，其中的文件可能正被占用，请关闭后重试。", ex);
+                }
+            }
+            Directory.CreateDirectory(target);
+        }
+        return targets;
+    }
+
+    /// <summary>在后台定位 Projects\SMOM 目录，并在界面上显示四个完整输出路径。</summary>
+    private async Task ResolveSmomPathsAsync(CancellationToken token)
+    {
+        var inputPath = SmomProjectPathTextBox.Text.Trim().Trim('"');
+        var smomDirectory = await Task.Run(() => FindSmomDirectory(inputPath, token), token);
+        if (smomDirectory is null)
+        {
+            _resolvedOutputPaths = null;
+            SetUnrecognizedPaths();
+            return;
+        }
+
+        _resolvedOutputPaths = new[]
+        {
+            Path.Combine(smomDirectory, "SIE.ScheduleServer", "bin", "Debug", "net6.0"),
+            Path.Combine(smomDirectory, "SIE.WebApiHost", "bin", "Debug", "net6.0"),
+            Path.Combine(smomDirectory, "WebClient", "bin", "Debug", "net6.0"),
+            Path.Combine(smomDirectory, "WpfClient", "bin", "Debug", "net6.0-windows")
+        };
+        var outerRepositoryName = new DirectoryInfo(smomDirectory).Parent?.Parent?.Parent?.Name;
+        System.Windows.Media.Brush? environmentBrush = null;
+        if (string.Equals(outerRepositoryName, "SMOM.KAIZHONG-Prod", StringComparison.OrdinalIgnoreCase))
+        {
+            environmentBrush = System.Windows.Media.Brushes.Red;
+            DllEnvironmentTextBlock.Text = "正式机DLL";
+        }
+        else if (string.Equals(outerRepositoryName, "SMOM.KAIZHONG", StringComparison.OrdinalIgnoreCase))
+        {
+            environmentBrush = System.Windows.Media.Brushes.Green;
+            DllEnvironmentTextBlock.Text = "测试机DLL";
+        }
+        else DllEnvironmentTextBlock.Text = "未能识别DLL环境";
+
+        SetColoredPath(ScheduleServerPathTextBlock, "SIE.ScheduleServer", _resolvedOutputPaths[0], outerRepositoryName, environmentBrush);
+        SetColoredPath(WebApiHostPathTextBlock, "SIE.WebApiHost", _resolvedOutputPaths[1], outerRepositoryName, environmentBrush);
+        SetColoredPath(WebClientPathTextBlock, "WebClient", _resolvedOutputPaths[2], outerRepositoryName, environmentBrush);
+        SetColoredPath(WpfClientPathTextBlock, "WpfClient", _resolvedOutputPaths[3], outerRepositoryName, environmentBrush);
+        UpdateDllCountPreview();
+    }
+
+    /// <summary>从输入目录向上回溯并向下有限搜索名称严格匹配的 Projects\SMOM 结构。</summary>
+    private static string? FindSmomDirectory(string inputPath, CancellationToken token)
+    {
+        if (string.IsNullOrWhiteSpace(inputPath)) return null;
+        string fullPath;
+        try { fullPath = Path.GetFullPath(inputPath); }
+        catch { return null; }
+        // 输入即使比 SMOM 更深，也可以直接从文本中的 Projects\SMOM 片段截取项目目录。
+        var marker = $"{Path.DirectorySeparatorChar}Projects{Path.DirectorySeparatorChar}SMOM";
+        var markerIndex = fullPath.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (markerIndex >= 0)
+        {
+            var embeddedSmom = fullPath[..(markerIndex + marker.Length)];
+            if (Directory.Exists(embeddedSmom)) return embeddedSmom;
+        }
+        var start = Directory.Exists(fullPath) ? new DirectoryInfo(fullPath) : File.Exists(fullPath) ? new FileInfo(fullPath).Directory : null;
+        if (start is null) return null;
+
+        for (var current = start; current is not null; current = current.Parent)
+        {
+            token.ThrowIfCancellationRequested();
+            if (IsSmomDirectory(current)) return current.FullName;
+
+            // 两种仓库都采用“外层环境目录\SMOM.KAIZHONG\Projects\SMOM”的固定结构。
+            // 因此即使用户选择的是外层目录下的 CrossPlatformCJ.V10.3，也可以先向上找到
+            // SMOM.KAIZHONG-Prod 或 SMOM.KAIZHONG，再转入旁边的 SMOM.KAIZHONG 仓库。
+            if (current.Name.Equals("SMOM.KAIZHONG-Prod", StringComparison.OrdinalIgnoreCase) ||
+                current.Name.Equals("SMOM.KAIZHONG", StringComparison.OrdinalIgnoreCase))
+            {
+                var nestedRepository = Path.Combine(current.FullName, "SMOM.KAIZHONG", "Projects", "SMOM");
+                if (Directory.Exists(nestedRepository)) return nestedRepository;
+            }
+
+            var direct = Path.Combine(current.FullName, "Projects", "SMOM");
+            if (Directory.Exists(direct)) return direct;
+        }
+
+        var pending = new Queue<(DirectoryInfo Directory, int Depth)>();
+        pending.Enqueue((start, 0));
+        while (pending.Count > 0)
+        {
+            token.ThrowIfCancellationRequested();
+            var (directory, depth) = pending.Dequeue();
+            if (depth >= 4) continue;
+            DirectoryInfo[] children;
+            try { children = directory.GetDirectories(); }
+            catch { continue; }
+            foreach (var child in children)
+            {
+                if (IsSmomDirectory(child)) return child.FullName;
+                if (child.Name is not ("bin" or "obj" or ".git" or ".vs")) pending.Enqueue((child, depth + 1));
+            }
+        }
+        return null;
+    }
+
+    /// <summary>判断目录是否正好是 Projects 文件夹下名为 SMOM 的目录。</summary>
+    private static bool IsSmomDirectory(DirectoryInfo directory) =>
+        directory.Name.Equals("SMOM", StringComparison.OrdinalIgnoreCase) &&
+        directory.Parent?.Name.Equals("Projects", StringComparison.OrdinalIgnoreCase) == true;
+
+    /// <summary>显示完整路径，并单独给外层环境目录名称设置红色或绿色。</summary>
+    private static void SetColoredPath(System.Windows.Controls.TextBlock target, string label, string path, string? highlightedName, System.Windows.Media.Brush? brush)
+    {
+        target.Inlines.Clear();
+        target.Inlines.Add(new Run($"{label}："));
+        if (string.IsNullOrWhiteSpace(highlightedName) || brush is null)
+        {
+            target.Inlines.Add(new Run(path));
+            return;
+        }
+
+        var marker = $"{Path.DirectorySeparatorChar}{highlightedName}{Path.DirectorySeparatorChar}";
+        var markerIndex = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (markerIndex < 0)
+        {
+            target.Inlines.Add(new Run(path));
+            return;
+        }
+        var nameIndex = markerIndex + 1;
+        target.Inlines.Add(new Run(path[..nameIndex]));
+        target.Inlines.Add(new Run(path.Substring(nameIndex, highlightedName.Length)) { Foreground = brush, FontWeight = FontWeights.Bold });
+        target.Inlines.Add(new Run(path[(nameIndex + highlightedName.Length)..]));
+    }
+
+    /// <summary>无法识别项目结构时统一重置四行提示。</summary>
+    private void SetUnrecognizedPaths()
+    {
+        ScheduleServerPathTextBlock.Text = "SIE.ScheduleServer：未能识别路径";
+        WebApiHostPathTextBlock.Text = "SIE.WebApiHost：未能识别路径";
+        WebClientPathTextBlock.Text = "WebClient：未能识别路径";
+        WpfClientPathTextBlock.Text = "WpfClient：未能识别路径";
+        DllEnvironmentTextBlock.Text = "未能识别DLL环境";
+        UpdateDllCountPreview();
     }
 }

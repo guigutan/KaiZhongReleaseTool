@@ -55,3 +55,6 @@ D:\myproject\KaiZhongReleaseTool\bin\Debug\net6.0-windows\runtimes\win-x86\nativ
 D:\myproject\KaiZhongReleaseTool\obj\Debug\net6.0-windows\KaiZhong.2170E697.Up2Date
 D:\myproject\KaiZhongReleaseTool\obj\Debug\net6.0-windows\GroupManagementWindow.baml
 D:\myproject\KaiZhongReleaseTool\obj\Debug\net6.0-windows\GroupManagementWindow.g.cs
+D:\myproject\KaiZhongReleaseTool\obj\Debug\net6.0-windows\KaiZhongReleaseTool.sourcelink.json
+D:\myproject\KaiZhongReleaseTool\obj\Debug\net6.0-windows\PublishServerSelectionWindow.baml
+D:\myproject\KaiZhongReleaseTool\obj\Debug\net6.0-windows\PublishServerSelectionWindow.g.cs

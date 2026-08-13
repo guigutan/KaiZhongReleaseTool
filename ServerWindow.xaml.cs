@@ -10,6 +10,7 @@ namespace KaiZhongReleaseTool;
 public partial class ServerWindow : Window
 {
     private readonly ServerHost _server;
+    private readonly LogRepository _logRepository = new();
 
     /// <summary>绑定服务宿主，并在窗口加载后自动启动监听。</summary>
     public ServerWindow(ServerHost server)
@@ -50,6 +51,9 @@ public partial class ServerWindow : Window
     {
         LogTextBox.AppendText(message + Environment.NewLine); LogTextBox.ScrollToEnd();
     });
+
+    /// <summary>打开服务端本机的历史发布和回滚日志。</summary>
+    private void ViewLogs_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e) => new LogViewerWindow(_logRepository) { Owner = this }.ShowDialog();
 
     /// <summary>普通关闭只隐藏到托盘，托盘菜单“退出”才真正关闭。</summary>
     protected override void OnClosing(CancelEventArgs e)

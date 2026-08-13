@@ -16,10 +16,11 @@
         <Style TargetType="Window"><Setter Property="FontFamily" Value="Microsoft YaHei UI"/><Setter Property="Foreground" Value="{StaticResource InkBrush}"/><Setter Property="Background" Value="{StaticResource AppBackground}"/></Style>
         <Style TargetType="GroupBox">
             <Setter Property="Background" Value="#EFFFFFFF"/><Setter Property="BorderBrush" Value="#B8FFFFFF"/><Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="20"/>
             <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="GroupBox">
-                <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="18" Padding="20" Effect="{DynamicResource CardShadow}">
+                <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="18" Padding="{TemplateBinding Padding}" Effect="{DynamicResource CardShadow}">
                     <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                        <TextBlock Text="{TemplateBinding Header}" FontSize="15" FontWeight="SemiBold" Margin="2,0,0,14"/>
+                        <ContentPresenter ContentSource="Header" TextElement.FontSize="15" TextElement.FontWeight="SemiBold" Margin="2,0,0,14"/>
                         <ContentPresenter Grid.Row="1"/></Grid>
                 </Border>
             </ControlTemplate></Setter.Value></Setter>

@@ -7,9 +7,9 @@
             <Ellipse Width="520" Height="520" Canvas.Left="850" Canvas.Top="430" Opacity="0.20"><Ellipse.Fill><RadialGradientBrush><GradientStop Color="#74E8AD"/><GradientStop Color="#0074E8AD" Offset="1"/></RadialGradientBrush></Ellipse.Fill></Ellipse>
         </Canvas>
 
-        <GroupBox Grid.Column="0" Header="服务器列表" Margin="0,0,12,0">
+        <GroupBox Grid.Column="0" Margin="0,0,12,0" Padding="18">
             <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                <StackPanel Margin="0,0,0,14"><TextBlock Text="分组筛选" Foreground="{StaticResource MutedBrush}" FontWeight="SemiBold" Margin="2,0,0,7"/><ComboBox x:Name="GroupFilterComboBox" Style="{StaticResource GroupComboBoxStyle}" SelectionChanged="GroupFilterComboBox_SelectionChanged"/></StackPanel>
+                <Border Background="#E8F5FD" BorderBrush="#C8E5F3" BorderThickness="1" CornerRadius="12" Padding="10,7" Margin="0,0,0,12"><WrapPanel x:Name="ServerGroupFilterPanel"><CheckBox x:Name="AllServersFilterCheckBox" Content="全部" IsChecked="True" FontWeight="Bold" FontSize="14" Padding="5" Margin="0,2,12,2" Cursor="Hand" Click="AllServersFilterCheckBox_Click"/></WrapPanel></Border>
                 <DataGrid x:Name="ServerDataGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" HeadersVisibility="Column"
                           GridLinesVisibility="Horizontal" BorderThickness="0" Background="Transparent" RowHeight="26" ColumnHeaderHeight="42" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
                           SelectionChanged="ServerDataGrid_SelectionChanged" PreviewMouseRightButtonDown="ServerDataGrid_PreviewMouseRightButtonDown" MouseDoubleClick="ServerDataGrid_MouseDoubleClick">
@@ -37,13 +37,18 @@
                         </Style.Triggers>
                     </Style></DataGrid.RowStyle>
                     <DataGrid.CellStyle><Style TargetType="DataGridCell"><Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=DataGridRow}}"/><Setter Property="BorderThickness" Value="0"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="VerticalContentAlignment" Value="Center"/><Style.Triggers><Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="Transparent"/></Trigger></Style.Triggers></Style></DataGrid.CellStyle>
-                    <DataGrid.ContextMenu><ContextMenu>
-                        <MenuItem x:Name="RefreshServersMenuItem" Header="刷新服务器状态" Click="RefreshServers_Click"/>
-                        <MenuItem Header="远程服务器" Click="RemoteServer_Click"/>
-                        <MenuItem Header="新增服务器" Click="AddServer_Click"/>
-                        <MenuItem Header="分组管理" Click="ManageGroups_Click"/>
-                        <MenuItem Header="编辑服务器" Click="EditServer_Click"/>
-                        <MenuItem Header="删除服务器" Click="DeleteServer_Click"/>
+                    <DataGrid.ContextMenu><ContextMenu><ContextMenu.Resources><Style TargetType="Separator"><Setter Property="Margin" Value="8,8"/><Setter Property="Height" Value="5"/><Setter Property="Background" Value="#C9DEE9"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Separator"><Grid Height="5" Margin="8,0"><Border Height="1" Background="{TemplateBinding Background}" VerticalAlignment="Top"/><Border Height="1" Background="{TemplateBinding Background}" VerticalAlignment="Bottom"/></Grid></ControlTemplate></Setter.Value></Setter></Style></ContextMenu.Resources>
+                        <MenuItem Header="远程服务器" Click="RemoteServer_Click"><MenuItem.Icon><Grid Width="16" Height="16"><Border Background="#3978C6" CornerRadius="3"/><Border Margin="2.5,2.5,2.5,5" Background="#EAF5FF" CornerRadius="1"/><Path Data="M 8,11 L 8,14 M 5.5,14 L 10.5,14" Stroke="White" StrokeThickness="1.4" StrokeStartLineCap="Round"/></Grid></MenuItem.Icon></MenuItem>
+                        <Separator/>
+                        <MenuItem Header="新增服务器" Click="AddServer_Click"><MenuItem.Icon><Grid Width="16" Height="16"><Ellipse Fill="#21B879"/><Path Data="M 8,4 L 8,12 M 4,8 L 12,8" Stroke="White" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/></Grid></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="编辑服务器" Click="EditServer_Click"><MenuItem.Icon><Grid Width="16" Height="16"><Border Background="#278BF5" CornerRadius="8"/><Path Data="M 4,11 L 5,8 L 10.5,2.5 L 13.5,5.5 L 8,11 Z M 4,13 L 12,13" Stroke="White" StrokeThickness="1.4" StrokeLineJoin="Round"/></Grid></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="删除服务器" Click="DeleteServer_Click"><MenuItem.Icon><Grid Width="16" Height="16"><Ellipse Fill="#E65867"/><Path Data="M 4,8 L 12,8" Stroke="White" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/></Grid></MenuItem.Icon></MenuItem>
+                        <Separator/>
+                        <MenuItem x:Name="RefreshServersMenuItem" Header="刷新状态" Click="RefreshServers_Click"><MenuItem.Icon><Grid Width="16" Height="16"><Ellipse Fill="#16A6B6"/><Path Data="M 12.5,6 A 5,5 0 1 0 12,11 M 12.5,3 L 12.5,6 L 9.5,6" Stroke="White" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeLineJoin="Round" Fill="Transparent"/></Grid></MenuItem.Icon></MenuItem>
+                        <Separator/>
+                        <MenuItem Header="分组管理" Click="ManageGroups_Click"><MenuItem.Icon><Grid Width="16" Height="16"><Border Background="#8667D6" CornerRadius="8"/><Ellipse Width="4" Height="4" Fill="White" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3,3,0,0"/><Ellipse Width="4" Height="4" Fill="White" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,3,3,0"/><Ellipse Width="4" Height="4" Fill="White" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,3"/></Grid></MenuItem.Icon></MenuItem>
+                        <Separator/>
+                        <MenuItem Header="发布回滚" Click="RollbackServer_Click"><MenuItem.Icon><Grid Width="16" Height="16"><Ellipse Fill="#E98A50"/><Path Data="M 5,5 L 2.8,7.2 L 5,9.4 M 3.2,7.2 L 9,7.2 A 3.5,3.5 0 0 1 9,14" Stroke="White" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeLineJoin="Round" Fill="Transparent"/></Grid></MenuItem.Icon></MenuItem>
                     </ContextMenu></DataGrid.ContextMenu>
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="服务器" Binding="{Binding Name}" Width="Auto" ElementStyle="{StaticResource ServerCellTextStyle}"/>
@@ -76,8 +81,8 @@
                     <TextBlock x:Name="WebClientPathTextBlock" Grid.Row="3" Grid.ColumnSpan="3" Text="WebClient：未能识别路径" Margin="0,7,0,0" TextWrapping="Wrap"/>
                     <TextBlock x:Name="WpfClientPathTextBlock" Grid.Row="4" Grid.ColumnSpan="3" Text="WpfClient：未能识别路径" Margin="0,7,0,0" TextWrapping="Wrap"/>
                     <DockPanel Grid.Row="5" Grid.ColumnSpan="3" Margin="0,10,0,0">
-                        <Button DockPanel.Dock="Right" Content="发布到服务器" Width="125" Margin="10,0,0,0" Background="#1BAA72" Click="PublishToServerButton_Click"/>
-                        <Button DockPanel.Dock="Right" Content="获取DLL" Width="105" Margin="12,0,0,0" Click="GetDllButton_Click"/>
+                        <Button x:Name="PublishToServerButton" DockPanel.Dock="Right" Content="上传并发布" Width="132" Margin="10,0,0,0" BorderBrush="#087D4D" BorderThickness="1" Click="PublishToServerButton_Click"><Button.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#24C883"/><GradientStop Color="#078C57" Offset="1"/></LinearGradientBrush></Button.Background><Button.Effect><DropShadowEffect Color="#087D4D" BlurRadius="13" ShadowDepth="3" Opacity="0.38"/></Button.Effect></Button>
+                        <Button x:Name="GetDllButton" DockPanel.Dock="Right" Content="获取DLL" Width="110" Margin="12,0,0,0" BorderBrush="#176FC1" BorderThickness="1" Click="GetDllButton_Click"><Button.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#48A9FF"/><GradientStop Color="#1674D1" Offset="1"/></LinearGradientBrush></Button.Background><Button.Effect><DropShadowEffect Color="#176FC1" BlurRadius="12" ShadowDepth="3" Opacity="0.32"/></Button.Effect></Button>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                             <RadioButton x:Name="SpecifiedDllRadioButton" Content="获取指定DLL" GroupName="DllMode" IsChecked="True" Margin="0,0,14,0" Checked="DllModeRadioButton_Checked"/>
                             <RadioButton x:Name="AllDllRadioButton" Content="获取全量DLL" GroupName="DllMode" Checked="DllModeRadioButton_Checked"/>
@@ -98,7 +103,14 @@
                     <TextBlock Grid.Row="3" Text="修改内容" VerticalAlignment="Top" Margin="0,9"/><TextBox x:Name="ContentTextBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Height="78" Margin="4" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"/>
                 </Grid>
             </GroupBox>
-            <GroupBox Grid.Row="3" Header="执行结果" Margin="0,16,0,0"><TextBox x:Name="ResultTextBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Consolas"/></GroupBox>
+            <GroupBox Grid.Row="3" Margin="0,16,0,0" Padding="20,20,20,0">
+                <GroupBox.Header><StackPanel Orientation="Horizontal">
+                    <TextBlock Text="执行结果"/><TextBlock Text="查看日志" Foreground="#278BF5" Cursor="Hand" Margin="22,0,0,0" TextDecorations="Underline" MouseLeftButtonDown="ViewLogs_MouseLeftButtonDown"/></StackPanel>
+                </GroupBox.Header><Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <Grid><TextBox x:Name="ResultTextBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Consolas"/><RichTextBox x:Name="PublishLogRichTextBox" IsReadOnly="True" VerticalScrollBarVisibility="Auto" FontFamily="Microsoft YaHei UI" FontSize="14" Visibility="Collapsed" Background="Transparent" BorderThickness="0"/></Grid>
+                    <TextBlock Grid.Row="1" Text="Copyright ©2026 深圳凯中精密技术股份有限公司 版权所有 by tanxianzhong" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="#7A91A3" FontSize="12" Margin="2" Padding="0" LineHeight="12"/>
+                </Grid></GroupBox>
         </Grid>
     </Grid>
 </Window>

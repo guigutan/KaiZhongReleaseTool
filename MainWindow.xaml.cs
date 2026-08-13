@@ -10,6 +10,7 @@ using Microsoft.Data.Sqlite;
 using System.Diagnostics;
 using System.Windows.Media;
 using System.Windows.Documents;
+using Brushes = System.Windows.Media.Brushes;
 
 namespace KaiZhongReleaseTool;
 
@@ -24,8 +25,12 @@ public partial class MainWindow : Window
     // 状态检测应快速返回，单独使用三秒超时的客户端。
     private readonly HttpClient _statusHttpClient = new() { Timeout = TimeSpan.FromSeconds(3) };
     private readonly ServerRepository _serverRepository = new();
+    private readonly LogRepository _logRepository = new();
+    private string? _currentLogSetName;
     private readonly List<ServerProfile> _allServers = new();
     private readonly ObservableCollection<ServerProfile> _servers = new();
+    private readonly Dictionary<string, System.Windows.Controls.CheckBox> _serverGroupFilterCheckBoxes = new(StringComparer.OrdinalIgnoreCase);
+    private bool _updatingServerGroupFilters;
     private ServerProfile? _selectedServer;
     private CancellationTokenSource? _pathDetectionCts;
     private string[]? _resolvedOutputPaths;
@@ -58,9 +63,7 @@ public partial class MainWindow : Window
         _allServers.Clear();
         _allServers.AddRange(_serverRepository.GetAll());
         var selectedServer = selectedId.HasValue ? _allServers.FirstOrDefault(item => item.Id == selectedId.Value) : null;
-        var groups = new[] { "全部分组" }.Concat(_serverRepository.GetGroups()).ToArray();
-        GroupFilterComboBox.ItemsSource = groups;
-        GroupFilterComboBox.SelectedItem = selectedServer?.GroupName ?? "全部分组";
+        RebuildServerGroupFilters();
         ApplyGroupFilter();
         if (selectedId.HasValue)
             ServerDataGrid.SelectedItem = _servers.FirstOrDefault(item => item.Id == selectedId.Value);
@@ -68,25 +71,53 @@ public partial class MainWindow : Window
             ServerDataGrid.SelectedIndex = 0;
     }
 
-    /// <summary>根据下拉框选中的分组刷新左侧可见服务器。</summary>
+    /// <summary>根据勾选的一个或多个分组刷新左侧可见服务器。</summary>
     private void ApplyGroupFilter()
     {
-        var group = GroupFilterComboBox.SelectedItem as string ?? "全部分组";
-        var visibleServers = group == "全部分组"
-            ? _allServers
-            : _allServers.Where(item => string.Equals(item.GroupName, group, StringComparison.OrdinalIgnoreCase));
+        var selectedGroups = _serverGroupFilterCheckBoxes.Where(item => item.Value.IsChecked == true).Select(item => item.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var showAll = AllServersFilterCheckBox.IsChecked == true || selectedGroups.Count == 0;
+        var visibleServers = showAll ? _allServers : _allServers.Where(item => selectedGroups.Contains(item.GroupName));
         _servers.Clear();
         foreach (var server in visibleServers) _servers.Add(server);
-        ServerCountTextBlock.Text = group == "全部分组"
-            ? $"共 {_allServers.Count} 台服务器"
-            : $"当前分组 {_servers.Count} 台，共 {_allServers.Count} 台";
+        ServerCountTextBlock.Text = showAll ? $"共 {_allServers.Count} 台服务器" : $"当前筛选 {_servers.Count} 台，共 {_allServers.Count} 台";
     }
 
-    /// <summary>切换分组时只筛选列表，不重新访问数据库和服务器。</summary>
-    private void GroupFilterComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    /// <summary>根据数据库分组重建自动换行的筛选复选框。</summary>
+    private void RebuildServerGroupFilters()
     {
-        ApplyGroupFilter();
-        if (_servers.Count > 0) ServerDataGrid.SelectedIndex = 0;
+        _updatingServerGroupFilters = true;
+        try
+        {
+            ServerGroupFilterPanel.Children.Clear(); ServerGroupFilterPanel.Children.Add(AllServersFilterCheckBox); _serverGroupFilterCheckBoxes.Clear(); AllServersFilterCheckBox.IsChecked = true;
+            foreach (var groupName in _serverRepository.GetGroups())
+            {
+                var checkBox = new System.Windows.Controls.CheckBox { Content = groupName, Tag = groupName, FontSize = 14, Padding = new Thickness(5), Margin = new Thickness(0, 2, 12, 2), Cursor = System.Windows.Input.Cursors.Hand };
+                checkBox.Click += ServerGroupFilterCheckBox_Click; _serverGroupFilterCheckBoxes[groupName] = checkBox; ServerGroupFilterPanel.Children.Add(checkBox);
+            }
+        }
+        finally { _updatingServerGroupFilters = false; }
+    }
+
+    private void AllServersFilterCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updatingServerGroupFilters) return;
+        _updatingServerGroupFilters = true;
+        try { AllServersFilterCheckBox.IsChecked = true; foreach (var checkBox in _serverGroupFilterCheckBoxes.Values) checkBox.IsChecked = false; }
+        finally { _updatingServerGroupFilters = false; }
+        ApplyGroupFilter(); if (_servers.Count > 0) ServerDataGrid.SelectedIndex = 0;
+    }
+
+    private void ServerGroupFilterCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updatingServerGroupFilters) return;
+        _updatingServerGroupFilters = true;
+        try
+        {
+            var anySelected = _serverGroupFilterCheckBoxes.Values.Any(item => item.IsChecked == true);
+            AllServersFilterCheckBox.IsChecked = !anySelected;
+        }
+        finally { _updatingServerGroupFilters = false; }
+        ApplyGroupFilter(); if (_servers.Count > 0) ServerDataGrid.SelectedIndex = 0;
     }
 
     /// <summary>
@@ -308,9 +339,8 @@ public partial class MainWindow : Window
     private void DeleteServer_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedServer is null) { ShowSelectServerTip(); return; }
-        var answer = System.Windows.MessageBox.Show($"确定删除服务器“{_selectedServer.Name}”吗？\n此操作不会删除远程服务器上的任何内容。",
-            "删除确认", MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (answer != MessageBoxResult.Yes) return;
+        var confirmation = new DeleteServerConfirmationWindow(_selectedServer.Name) { Owner = this };
+        if (confirmation.ShowDialog() != true) return;
         _serverRepository.Delete(_selectedServer.Id);
         LoadServers();
     }
@@ -366,32 +396,39 @@ public partial class MainWindow : Window
     private void RemoteServer_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedServer is null) { ShowSelectServerTip(); return; }
+        if (string.IsNullOrWhiteSpace(_selectedServer.Username) || string.IsNullOrEmpty(_selectedServer.Password))
+        {
+            System.Windows.MessageBox.Show("请先编辑服务器，填写远程桌面账户和密码。", "远程服务器", MessageBoxButton.OK, MessageBoxImage.Information); return;
+        }
+        OpenSystemRemoteDesktop(_selectedServer);
+    }
+
+    /// <summary>备用方式：写入 Windows 凭据管理器并启动系统 mstsc。</summary>
+    public static void OpenSystemRemoteDesktop(ServerProfile server)
+    {
         try
         {
-            if (string.IsNullOrWhiteSpace(_selectedServer.Username) || string.IsNullOrEmpty(_selectedServer.Password))
-            {
-                System.Windows.MessageBox.Show("请先编辑服务器，填写远程桌面账户和密码。", "远程服务器", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
+            // 3389 是远程桌面的默认端口，此时地址只写主机名；非默认端口才追加端口号。
+            var address = server.RemoteDesktopPort == 3389
+                ? server.Host
+                : $"{server.Host}:{server.RemoteDesktopPort}";
+            var credentialTarget = $"TERMSRV/{address}";
+            var remoteUserName = NormalizeRemoteDesktopUserName(server.Host, server.Username);
 
-            var targets = new[]
-            {
-                $"TERMSRV/{_selectedServer.Host}",
-                $"TERMSRV/{_selectedServer.Host}:{_selectedServer.RemoteDesktopPort}"
-            };
-            foreach (var target in targets)
-            {
+            // 先删除通用凭据和 Windows 凭据中属于当前服务器的旧条目。
+            WindowsCredentialHelper.DeleteServerCredentials(server.Host, server.RemoteDesktopPort);
+
+            // “.\账户”表示远程服务器的本地账户。cmdkey 写入时改成“服务器\账户”，
+            // RDP 文件仍保留原始写法，使远程登录界面继续按本机账户处理。
+            WindowsCredentialHelper.SaveRemoteDesktopCredential(
+                credentialTarget, remoteUserName, server.Password);
                 // 删除命令在凭据不存在时会返回非零退出码，此处可以忽略。
-                RunCmdKey($"/delete:{target}", null, null, requireSuccess: false);
-                RunCmdKey($"/add:{target}", _selectedServer.Username, _selectedServer.Password, requireSuccess: true);
-            }
 
             // RDP 文件不保存密码，密码由上面写入的 Windows 凭据管理器提供。
             var rdpFile = Path.Combine(Path.GetTempPath(), $"KaiZhongRdp_{Guid.NewGuid():N}.rdp");
-            var address = $"{_selectedServer.Host}:{_selectedServer.RemoteDesktopPort}";
             File.WriteAllText(rdpFile,
                 $"full address:s:{address}{Environment.NewLine}" +
-                $"username:s:{_selectedServer.Username}{Environment.NewLine}" +
+                $"username:s:{remoteUserName}{Environment.NewLine}" +
                 "prompt for credentials:i:0\r\n" +
                 "promptcredentialonce:i:1\r\n" +
                 "authentication level:i:2\r\n" +
@@ -407,6 +444,24 @@ public partial class MainWindow : Window
         {
             System.Windows.MessageBox.Show($"无法打开远程服务器：{ex.Message}", "远程服务器", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+    }
+
+    /// <summary>
+    /// 规范远程桌面账户：服务器IP\用户表示服务器本地账户，域名/用户表示 AD 域账户。
+    /// </summary>
+    private static string NormalizeRemoteDesktopUserName(string host, string userName)
+    {
+        // 先统一分隔符，避免用户混用“/”和“\”导致凭据账户不一致。
+        var normalized = userName.Trim().Replace('/', '\\');
+        if (normalized.StartsWith(@".\", StringComparison.Ordinal))
+            return $@"{host}\{normalized[2..]}";
+
+        // 用户允许按“kz.com/user1”录入，RDP 使用标准的“kz.com\user1”格式。
+        var slashIndex = normalized.IndexOf('/');
+        if (slashIndex > 0 && slashIndex < normalized.Length - 1)
+            return normalized[..slashIndex] + "\\" + normalized[(slashIndex + 1)..];
+
+        return normalized;
     }
 
     /// <summary>执行 cmdkey，新增凭据时自动传入账户和明文密码。</summary>
@@ -461,8 +516,8 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    /// <summary>校验 SMOMDLL 中存在 DLL 后，打开支持全选和多选的服务器选择窗口。</summary>
-    private void PublishToServerButton_Click(object sender, RoutedEventArgs e)
+    /// <summary>校验本地 DLL、选择服务器，并把完整 SMOMDLL 并发同步到所有目标服务器。</summary>
+    private async void PublishToServerButton_Click(object sender, RoutedEventArgs e)
     {
         var dllRoot = Path.Combine(AppContext.BaseDirectory, "SMOMDLL");
         string[] dllFiles;
@@ -491,72 +546,469 @@ public partial class MainWindow : Window
 
         var dialog = new PublishServerSelectionWindow(_allServers) { Owner = this };
         if (dialog.ShowDialog() != true) return;
-        ResultTextBox.Text = $"已准备 {dllFiles.Length} 个 DLL。{Environment.NewLine}" +
-            $"已选择 {dialog.SelectedServers.Count} 台服务器：{Environment.NewLine}" +
-            string.Join(Environment.NewLine, dialog.SelectedServers.Select(server => $"- {server.Name}（{server.Host}）")) +
-            $"{Environment.NewLine}{Environment.NewLine}服务器选择已完成，实际发布功能将在后续步骤中接入。";
+
+        var tempZip = Path.Combine(Path.GetTempPath(), $"KaiZhongPublish_{Guid.NewGuid():N}.zip");
+        PublishToServerButton.IsEnabled = false;
+        GetDllButton.IsEnabled = false;
+        ResultTextBox.Visibility = Visibility.Collapsed;
+        PublishLogRichTextBox.Visibility = Visibility.Visible;
+        PublishLogRichTextBox.Document.Blocks.Clear();
+        try
+        {
+            var backupTimestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            _currentLogSetName = "Push" + backupTimestamp;
+            _logRepository.CreateSet(_currentLogSetName, "Push", backupTimestamp + ".zip");
+            AppendPublishLine($"当前发布日志：{_currentLogSetName}", Brushes.SteelBlue, true);
+            AppendPublishHeader("第1步：上传文件到服务器");
+            await Task.Run(() => ZipFile.CreateFromDirectory(dllRoot, tempZip, CompressionLevel.Optimal, includeBaseDirectory: false));
+            var uploads = await RunServerStageAsync(dialog.SelectedServers, server => UploadSmomDllAsync(server, tempZip), result => $"【{result.Server.Name}】文件上传{(result.Success ? "✔" : "×（已尝试5次）")}。", result => result.Success ? Brushes.SeaGreen : Brushes.Crimson);
+            if (uploads.Any(item => !item.Success)) { AppendPublishAbort("存在文件上传失败的服务器，已终止发布。"); return; }
+
+            AppendPublishHeader("第2步：检查服务器配置");
+            var checks = await RunDeploymentStageAsync(dialog.SelectedServers, "api/deploy/check", serverResult =>
+            {
+                foreach (var item in serverResult.Response?.Items ?? new())
+                {
+                    var text = $"【{serverResult.Server.Name}】{item.ApplicationName}[文件{(item.HasFiles ? "✔" : "×")}，备份路径{(item.HasBackupPath ? "✔" : "×")}，服务{(item.HasServices ? "✔" : "×")}]";
+                    var color = item.HasFiles && !item.HasBackupPath ? Brushes.Crimson : item.HasFiles && !item.HasServices ? Brushes.DarkGoldenrod : Brushes.SeaGreen;
+                    AppendPublishLine(text, color);
+                }
+                AppendPublishLine(string.Empty, Brushes.Black);
+            });
+            if (checks.Any(result => result.Response is null || !result.Response.Success)) { AppendPublishAbort("存在有文件但未配置备份路径的应用，已终止发布。"); return; }
+
+            AppendPublishHeader("第3步：备份文件");
+            var backups = await RunServerStageAsync(dialog.SelectedServers, server => BackupServerAsync(server, backupTimestamp), result => $"【{result.Server.Name}】{backupTimestamp}.zip 备份{(result.Success ? "✔" : "×")}", result => result.Success ? Brushes.SeaGreen : Brushes.Crimson);
+            if (backups.Any(item => !item.Success)) { AppendPublishAbort("存在备份失败的服务器，已终止发布。"); return; }
+
+            AppendPublishHeader("第4步：停止服务");
+            var stops = await RunDeploymentStageAsync(dialog.SelectedServers, "api/deploy/stop", result => WriteServiceStage(new[] { result }, "停止"));
+            if (stops.Any(result => result.Response is null || !result.Response.Success))
+            {
+                AppendPublishAbort("存在服务停止失败的服务器，不执行应用发布；正在恢复已停止的服务。");
+                await RunDeploymentStageAsync(dialog.SelectedServers, "api/deploy/start", result => WriteServiceStage(new[] { result }, "恢复启动"));
+                return;
+            }
+
+            AppendPublishHeader("第5步：发布应用程序");
+            var publishes = await RunDeploymentStageAsync(dialog.SelectedServers, "api/deploy/publish", result =>
+            {
+                foreach (var item in result.Response?.Items ?? new())
+                    AppendPublishLine($"【{result.Server.Name}】{item.ApplicationName} 发布{(item.Success ? "✔" : $"×（已尝试{item.Attempts}次）")}{(item.ApplicationName == "WpfClient" && item.Success ? $" 版本修改✔ 当前版本{item.Version}" : string.Empty)}", item.Success ? Brushes.SeaGreen : Brushes.Crimson);
+            });
+
+            AppendPublishHeader("第6步：启动服务");
+            var starts = await RunDeploymentStageAsync(dialog.SelectedServers, "api/deploy/start", result => WriteServiceStage(new[] { result }, "启动"));
+            var allSucceeded = starts.All(item => item.Response?.Success == true) && publishes.All(item => item.Response?.Success == true);
+            AppendPublishLine(allSucceeded ? "发布流程执行完成。" : "发布流程执行完成，但存在失败项，请查看红色日志。", allSucceeded ? Brushes.SeaGreen : Brushes.Crimson, true);
+            var failedServices = starts.SelectMany(result => (result.Response?.Items ?? new List<DeploymentStageItem>())
+                .Where(item => !item.Success)
+                .Select(item => (result.Server.Name, Item: item))).ToArray();
+            foreach (var failed in failedServices)
+                AppendPublishLine($"【{failed.Name}】服务：{failed.Item.ApplicationName}${failed.Item.ServiceName} 启动失败，请尽快处理。", Brushes.Crimson, true, failed.Name);
+        }
+        catch (Exception ex)
+        {
+            AppendPublishLine($"发布流程异常：{ex.Message}", Brushes.Crimson, true);
+        }
+        finally
+        {
+            PublishToServerButton.IsEnabled = true;
+            GetDllButton.IsEnabled = true;
+            if (File.Exists(tempZip)) File.Delete(tempZip);
+        }
     }
+
+    /// <summary>向一台服务器上传 SMOMDLL 压缩包，并返回该服务器的独立执行结果。</summary>
+    private async Task<SmomDllPublishResult> UploadSmomDllAsync(ServerProfile server, string zipPath)
+    {
+        string lastMessage = string.Empty;
+        for (var attempt = 1; attempt <= 5; attempt++)
+        {
+            try
+            {
+                await using var fileStream = File.OpenRead(zipPath);
+                using var form = new MultipartFormDataContent();
+                using var fileContent = new StreamContent(fileStream);
+                fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+                form.Add(fileContent, "smomDllArchive", Path.GetFileName(zipPath));
+                form.Add(new StringContent(_currentLogSetName ?? string.Empty), "logSetName");
+                using var response = await _httpClient.PostAsync(server.BaseUrl + "api/deploy/smomdll", form);
+                var parsed = await ReadCommandResponseAsync(response, "上传 SMOMDLL");
+                var commandResult = parsed.Result;
+                lastMessage = parsed.Message;
+                if (response.IsSuccessStatusCode && commandResult?.Success == true)
+                    return new SmomDllPublishResult(server, true, $"{lastMessage}（第 {attempt} 次成功）");
+            }
+            catch (Exception ex) { lastMessage = ex.Message; }
+            if (attempt < 5) await Task.Delay(TimeSpan.FromSeconds(3));
+        }
+        return new SmomDllPublishResult(server, false, $"上传失败，已尝试 5 次：{lastMessage}");
+    }
+
+    /// <summary>备份单台服务器本次确实存在待发布文件的应用目录。</summary>
+    private async Task<SmomDllPublishResult> BackupServerAsync(ServerProfile server, string timestamp)
+    {
+        try
+        {
+            var request = new ServerBackupRequest { LogSetName = _currentLogSetName, Timestamp = timestamp, ScheduleServerPath = server.ScheduleServerBackupPath, WebApiHostPath = server.WebApiHostBackupPath, WebClientPath = server.WebClientBackupPath, WpfClientPath = server.WpfClientBackupPath, BackupDestinationPath = server.BackupDestinationPath };
+            using var response = await _httpClient.PostAsJsonAsync(server.BaseUrl + "api/deploy/backup", request);
+            var parsed = await ReadCommandResponseAsync(response, "发布前备份");
+            return new SmomDllPublishResult(server, response.IsSuccessStatusCode && parsed.Result?.Success == true, parsed.Message);
+        }
+        catch (Exception ex) { return new SmomDllPublishResult(server, false, ex.Message); }
+    }
+
+    /// <summary>并发执行服务器任务，并按实际完成顺序即时写入日志。</summary>
+    private async Task<List<SmomDllPublishResult>> RunServerStageAsync(IEnumerable<ServerProfile> servers, Func<ServerProfile, Task<SmomDllPublishResult>> operation, Func<SmomDllPublishResult, string> format, Func<SmomDllPublishResult, System.Windows.Media.Brush> color)
+    {
+        var pending = servers.Select(operation).ToList();
+        var results = new List<SmomDllPublishResult>();
+        while (pending.Count > 0)
+        {
+            var completed = await Task.WhenAny(pending); pending.Remove(completed);
+            var result = await completed; results.Add(result); AppendPublishLine(format(result), color(result));
+        }
+        return results;
+    }
+
+    /// <summary>调用服务端分阶段接口并返回每台服务器的执行明细。</summary>
+    private async Task<List<ServerStageResult>> RunDeploymentStageAsync(IEnumerable<ServerProfile> servers, string endpoint, Action<ServerStageResult>? completedCallback = null)
+    {
+        async Task<ServerStageResult> ExecuteAsync(ServerProfile server)
+        {
+            try
+            {
+                using var response = await _httpClient.PostAsJsonAsync(server.BaseUrl + endpoint, CreateCurrentDeploymentRequest(server));
+                var content = await response.Content.ReadAsStringAsync();
+                if (string.IsNullOrWhiteSpace(content)) return new(server, null, $"HTTP {(int)response.StatusCode}，服务端未返回内容，请更新并重启服务端。");
+                var result = JsonSerializer.Deserialize<DeploymentStageResponse>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                return new(server, result, result?.Message ?? "服务端返回空结果。");
+            }
+            catch (Exception ex) { return new(server, null, ex.Message); }
+        }
+        var pending = servers.Select(ExecuteAsync).ToList();
+        var results = new List<ServerStageResult>();
+        while (pending.Count > 0)
+        {
+            var completed = await Task.WhenAny(pending); pending.Remove(completed); var result = await completed; results.Add(result);
+            if (result.Response is null) AppendPublishLine($"【{result.Server.Name}】阶段请求失败：{result.Message}", Brushes.Crimson, serverName: result.Server.Name);
+            else completedCallback?.Invoke(result);
+        }
+        return results;
+    }
+
+    private void WriteServiceStage(IEnumerable<ServerStageResult> results, string action)
+    {
+        foreach (var result in results)
+            foreach (var item in result.Response?.Items ?? new())
+                AppendPublishLine($"【{result.Server.Name}】{item.ApplicationName}${item.ServiceName} {action}{(item.Success ? "✔" : $"×（已尝试{item.Attempts}次）")}", item.Success ? Brushes.SeaGreen : Brushes.Crimson);
+    }
+
+    private void AppendPublishHeader(string text) => AppendPublishLine(text, Brushes.SteelBlue, true);
+    private void AppendPublishAbort(string text) => AppendPublishLine(text, Brushes.Crimson, true);
+
+    /// <summary>向发布日志追加一行带颜色的文字，并立即滚动到最新结果。</summary>
+    private void AppendPublishLine(string text, System.Windows.Media.Brush color, bool bold = false, string serverName = "")
+    {
+        var paragraph = new Paragraph(new Run(text) { Foreground = color, FontWeight = bold ? FontWeights.Bold : FontWeights.Normal }) { Margin = new Thickness(0, 2, 0, 2) };
+        PublishLogRichTextBox.Document.Blocks.Add(paragraph);
+        PublishLogRichTextBox.ScrollToEnd();
+        if (!string.IsNullOrWhiteSpace(_currentLogSetName))
+        {
+            var level = color == Brushes.Crimson ? "Error" : color == Brushes.DarkGoldenrod ? "Warning" : bold ? "Header" : "Success";
+            _logRepository.Append(_currentLogSetName, text, level, serverName);
+        }
+    }
+
+    private void ViewLogs_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e) => new LogViewerWindow(_logRepository) { Owner = this }.ShowDialog();
+
+    private sealed record ServerStageResult(ServerProfile Server, DeploymentStageResponse? Response, string Message);
+
+    /// <summary>按顺序执行单台服务器的 SMOMDLL 同步和发布前备份。</summary>
+    private async Task<SmomDllPublishResult> PublishAndBackupAsync(ServerProfile server, string zipPath, string backupTimestamp)
+    {
+        var syncResult = await UploadSmomDllAsync(server, zipPath);
+        if (!syncResult.Success) return syncResult;
+
+        var backupRequest = new ServerBackupRequest
+        {
+            Timestamp = backupTimestamp,
+            ScheduleServerPath = server.ScheduleServerBackupPath,
+            WebApiHostPath = server.WebApiHostBackupPath,
+            WebClientPath = server.WebClientBackupPath,
+            WpfClientPath = server.WpfClientBackupPath,
+            BackupDestinationPath = server.BackupDestinationPath
+        };
+        try
+        {
+            using var response = await _httpClient.PostAsJsonAsync(server.BaseUrl + "api/deploy/backup", backupRequest);
+            var backupParsed = await ReadCommandResponseAsync(response, "发布前备份");
+            var backupResult = backupParsed.Result;
+            var backupMessage = backupParsed.Message;
+            var backupSuccess = response.IsSuccessStatusCode && backupResult?.Success == true;
+            if (!backupSuccess) return new SmomDllPublishResult(server, false, $"上传：{syncResult.Message}；备份失败：{backupMessage}。未执行文件覆盖。");
+            using var applyResponse = await _httpClient.PostAsJsonAsync(server.BaseUrl + "api/deploy/apply", CreateDeploymentRequest(server));
+            var applyParsed = await ReadCommandResponseAsync(applyResponse, "执行发布");
+            var applyResult = applyParsed.Result;
+            var applyMessage = applyParsed.Message;
+            var success = applyResponse.IsSuccessStatusCode && applyResult?.Success == true;
+            return new SmomDllPublishResult(server, success, $"上传：{syncResult.Message}；备份：{backupMessage}；{applyMessage}");
+        }
+        catch (Exception ex)
+        {
+            return new SmomDllPublishResult(server, false, $"第1步：{syncResult.Message} 第2步备份失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>把服务器路径和对应服务配置转换成发布、回滚接口使用的请求。</summary>
+    private static DeploymentRollbackRequest CreateDeploymentRequest(ServerProfile server) => new()
+    {
+        ScheduleServerPath = server.ScheduleServerBackupPath, WebApiHostPath = server.WebApiHostBackupPath, WebClientPath = server.WebClientBackupPath, WpfClientPath = server.WpfClientBackupPath,
+        ScheduleServerServices = server.ScheduleServerServiceName, WebApiHostServices = server.WebApiHostServiceName, WebClientServices = server.WebClientServiceName, WpfClientServices = server.WpfClientServiceName,
+        BackupDestinationPath = server.BackupDestinationPath
+    };
+
+    private DeploymentRollbackRequest CreateCurrentDeploymentRequest(ServerProfile server)
+    {
+        var request = CreateDeploymentRequest(server); request.LogSetName = _currentLogSetName; return request;
+    }
+
+    /// <summary>读取所选服务器备份列表，让用户选择版本后执行服务端回滚。</summary>
+    private async void RollbackServer_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // 打开批量回滚窗口前刷新一次全部服务器状态，确认时据此执行严格的在线校验。
+            await Task.WhenAll(_allServers.Select(CheckServerStatusAsync));
+            async Task<(bool Success, string Message, string[] Files)> LoadBackupsAsync(ServerProfile server)
+            {
+                try
+                {
+                    using var response = await _httpClient.PostAsJsonAsync(server.BaseUrl + "api/deploy/backups", CreateDeploymentRequest(server));
+                    var parsed = await ReadCommandResponseAsync(response, "读取备份列表");
+                    var files = parsed.Result?.Data is JsonElement element && element.ValueKind == JsonValueKind.Array ? element.EnumerateArray().Select(item => item.GetString()).Where(item => !string.IsNullOrWhiteSpace(item)).Cast<string>().ToArray() : Array.Empty<string>();
+                    return (response.IsSuccessStatusCode && parsed.Result?.Success == true, parsed.Message, files);
+                }
+                catch (Exception ex) { return (false, ex.Message, Array.Empty<string>()); }
+            }
+            var dialog = new RollbackSelectionWindow(_allServers, LoadBackupsAsync) { Owner = this };
+            if (dialog.ShowDialog() != true) return;
+            var rollbackTimestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            _currentLogSetName = "RollBack" + rollbackTimestamp;
+            var backupSummary = string.Join("，", dialog.SelectedOptions.Select(item => $"{item.Server.Name}:{item.SelectedBackupFile}"));
+            _logRepository.CreateSet(_currentLogSetName, "RollBack", backupSummary);
+            ResultTextBox.Visibility = Visibility.Collapsed; PublishLogRichTextBox.Visibility = Visibility.Visible; PublishLogRichTextBox.Document.Blocks.Clear();
+            AppendPublishLine($"当前回滚日志：{_currentLogSetName}>>>回滚备份集：{backupSummary}", Brushes.SteelBlue, true);
+
+            AppendPublishHeader("第1步：停止服务");
+            var stops = await RunRollbackStageAsync(dialog.SelectedOptions, "api/deploy/rollback-stop", result => WriteServiceStage(new[] { result }, "停止"));
+            if (stops.Any(result => result.Response is null || !result.Response.Success))
+            {
+                AppendPublishAbort("存在服务停止失败，不执行回滚备份集；正在恢复已停止的服务。");
+                await RunRollbackStageAsync(dialog.SelectedOptions, "api/deploy/rollback-start", result => WriteServiceStage(new[] { result }, "恢复启动"));
+                return;
+            }
+
+            AppendPublishHeader("第2步：回滚备份集");
+            var rollbacks = await RunRollbackStageAsync(dialog.SelectedOptions, "api/deploy/rollback-files", result =>
+            {
+                foreach (var item in result.Response?.Items ?? new())
+                    AppendPublishLine($"【{result.Server.Name}】{item.ApplicationName} 回滚{(item.Success ? "✔" : $"×（已尝试{item.Attempts}次）")}{(item.ApplicationName == "WpfClient" && item.Success && item.Version is not null ? $" 当前版本{item.Version}" : string.Empty)}", item.Success ? Brushes.SeaGreen : Brushes.Crimson);
+            });
+
+            AppendPublishHeader("第3步：启动服务");
+            var starts = await RunRollbackStageAsync(dialog.SelectedOptions, "api/deploy/rollback-start", result => WriteServiceStage(new[] { result }, "启动"));
+            var success = rollbacks.All(item => item.Response?.Success == true) && starts.All(item => item.Response?.Success == true);
+            AppendPublishLine(success ? "回滚流程执行完成。" : "回滚流程执行完成，但存在失败项，请查看红色日志。", success ? Brushes.SeaGreen : Brushes.Crimson, true);
+            var failedServices = starts.SelectMany(result => (result.Response?.Items ?? new List<DeploymentStageItem>())
+                .Where(item => !item.Success)
+                .Select(item => (result.Server.Name, Item: item))).ToArray();
+            foreach (var failed in failedServices)
+                AppendPublishLine($"【{failed.Name}】服务：{failed.Item.ApplicationName}${failed.Item.ServiceName} 启动失败，请尽快处理。", Brushes.Crimson, true, failed.Name);
+        }
+        catch (Exception ex) { AppendPublishLine($"发布回滚失败：{ex.Message}", Brushes.Crimson, true); }
+    }
+
+    /// <summary>多台服务器按各自选择的备份版本并发执行回滚阶段，并按完成顺序实时显示。</summary>
+    private async Task<List<ServerStageResult>> RunRollbackStageAsync(IEnumerable<RollbackServerOption> options, string endpoint, Action<ServerStageResult> completedCallback)
+    {
+        async Task<ServerStageResult> ExecuteAsync(RollbackServerOption option)
+        {
+            try
+            {
+                var request = CreateCurrentDeploymentRequest(option.Server); request.BackupFileName = option.SelectedBackupFile;
+                using var response = await _httpClient.PostAsJsonAsync(option.Server.BaseUrl + endpoint, request);
+                var content = await response.Content.ReadAsStringAsync();
+                var result = string.IsNullOrWhiteSpace(content) ? null : JsonSerializer.Deserialize<DeploymentStageResponse>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                return new(option.Server, result, result?.Message ?? $"HTTP {(int)response.StatusCode}，服务端未返回有效结果。");
+            }
+            catch (Exception ex) { return new(option.Server, null, ex.Message); }
+        }
+        var pending = options.Select(ExecuteAsync).ToList(); var results = new List<ServerStageResult>();
+        while (pending.Count > 0)
+        {
+            var completed = await Task.WhenAny(pending); pending.Remove(completed); var result = await completed; results.Add(result);
+            if (result.Response is null) AppendPublishLine($"【{result.Server.Name}】阶段请求失败：{result.Message}", Brushes.Crimson, serverName: result.Server.Name); else completedCallback(result);
+        }
+        return results;
+    }
+
+    /// <summary>安全读取服务端响应，避免空响应或旧版接口返回非 JSON 时显示难懂的解析异常。</summary>
+    private static async Task<(CommandResponse? Result, string Message)> ReadCommandResponseAsync(HttpResponseMessage response, string operationName)
+    {
+        var content = await response.Content.ReadAsStringAsync();
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            var hint = response.StatusCode == System.Net.HttpStatusCode.NotFound
+                ? "当前服务端不支持此接口，请把服务端更新为最新版本并重新启动。"
+                : "服务端没有返回内容，请检查服务端运行日志。";
+            return (null, $"{operationName}失败：HTTP {(int)response.StatusCode}，{hint}");
+        }
+        try
+        {
+            var result = JsonSerializer.Deserialize<CommandResponse>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return result is null
+                ? (null, $"{operationName}失败：服务端返回了空的 JSON 结果。")
+                : (result, result.Message);
+        }
+        catch (JsonException)
+        {
+            var safeContent = content.Length > 500 ? content[..500] + "..." : content;
+            var hint = response.StatusCode == System.Net.HttpStatusCode.NotFound
+                ? "当前服务端可能仍是旧版本，请更新并重新启动服务端。"
+                : "服务端返回格式不是有效的 JSON，请查看服务端日志。";
+            return (null, $"{operationName}失败：HTTP {(int)response.StatusCode}，{hint}{Environment.NewLine}服务端响应：{safeContent}");
+        }
+    }
+
+    /// <summary>一台服务器的 SMOMDLL 同步结果。</summary>
+    private sealed record SmomDllPublishResult(ServerProfile Server, bool Success, string Message);
 
     /// <summary>根据所选模式收集 DLL，并复制到程序目录下对应的 SMOMDLL 子目录。</summary>
     private async void GetDllButton_Click(object sender, RoutedEventArgs e)
     {
         _pathDetectionCts?.Cancel();
         _pathDetectionCts = new CancellationTokenSource();
+        GetDllButton.IsEnabled = false;
+        PublishToServerButton.IsEnabled = false;
+        ResultTextBox.Visibility = Visibility.Collapsed;
+        PublishLogRichTextBox.Visibility = Visibility.Visible;
+        PublishLogRichTextBox.Document.Blocks.Clear();
+        var output = new List<string>();
+        void ShowOutput() => RenderDllOutput(output);
         try
         {
             await ResolveSmomPathsAsync(_pathDetectionCts.Token);
             if (_resolvedOutputPaths is null)
             {
-                ResultTextBox.Text = "未能识别 SMOM 项目路径，无法获取 DLL。";
+                output.Add("未能识别 SMOM 项目路径，无法获取 DLL。"); ShowOutput();
                 return;
             }
 
             var specifiedMode = SpecifiedDllRadioButton.IsChecked == true;
-            var specifiedNames = specifiedMode ? ReadSpecifiedDllNames(createWhenMissing: true) : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (specifiedMode && specifiedNames.Count == 0)
+            var listFilePath = GetDllListFilePath();
+            HashSet<string> specifiedNames;
+            if (specifiedMode)
             {
-                DllCountTextBlock.Text = "待获取：0 个";
-                ResultTextBox.Text = $"GetDLL.txt 内容为空，请先填写需要获取的 DLL 文件名。{Environment.NewLine}{GetDllListFilePath()}";
-                return;
+                output.Add("获取指定DLL"); output.Add(string.Empty); output.Add("第1步：读取GetDLL.txt信息");
+                if (!File.Exists(listFilePath))
+                {
+                    File.WriteAllText(listFilePath, string.Empty);
+                    output.Add("GetDLL.txt文件不存在，已经自动为您创建，请先填写指定DLL名"); ShowOutput(); DllCountTextBlock.Text = "待获取：0 个"; return;
+                }
+                specifiedNames = ReadSpecifiedDllNames(createWhenMissing: false);
+                if (specifiedNames.Count == 0)
+                {
+                    output.Add("请先填写指定DLL名"); ShowOutput(); DllCountTextBlock.Text = "待获取：0 个"; return;
+                }
+                output.Add("即将要获取的DLL："); output.AddRange(specifiedNames.OrderBy(name => name, StringComparer.OrdinalIgnoreCase)); output.Add(string.Empty);
             }
+            else specifiedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            var targetDirectories = PrepareDllTargetDirectories();
-            var requestedCount = specifiedMode ? specifiedNames.Count : 0;
-            var copiedCount = 0;
-            var missingCount = 0;
-            var summary = new List<string>();
+            // 清空目标目录前先扫描源文件，确保全量模式能显示准确的预计数量。
+            var sourceFilesByProject = new string[DllProjectNames.Length][];
             for (var index = 0; index < _resolvedOutputPaths.Length; index++)
             {
                 var sourceDirectory = _resolvedOutputPaths[index];
-                var projectName = DllProjectNames[index];
-                if (!Directory.Exists(sourceDirectory))
-                {
-                    summary.Add($"【{projectName}】源目录不存在，复制 0 个");
-                    if (specifiedMode) missingCount += specifiedNames.Count;
-                    continue;
-                }
-
-                var sourceFiles = Directory.GetFiles(sourceDirectory, "*.dll", SearchOption.TopDirectoryOnly);
-                var filesToCopy = specifiedMode
+                var sourceFiles = Directory.Exists(sourceDirectory) ? Directory.GetFiles(sourceDirectory, "*.dll", SearchOption.TopDirectoryOnly) : Array.Empty<string>();
+                sourceFilesByProject[index] = specifiedMode
                     ? sourceFiles.Where(file => specifiedNames.Contains(Path.GetFileName(file))).ToArray()
                     : sourceFiles.Where(file => Path.GetFileName(file).StartsWith("SIE", StringComparison.OrdinalIgnoreCase)).ToArray();
-                if (!specifiedMode) requestedCount += filesToCopy.Length;
-                foreach (var sourceFile in filesToCopy)
-                {
-                    File.Copy(sourceFile, Path.Combine(targetDirectories[index], Path.GetFileName(sourceFile)), overwrite: true);
-                    copiedCount++;
-                }
-                if (specifiedMode) missingCount += specifiedNames.Count - filesToCopy.Length;
-                summary.Add($"【{projectName}】复制 {filesToCopy.Length} 个 DLL 到 {targetDirectories[index]}");
             }
-            DllCountTextBlock.Text = $"汇总：{copiedCount} 个";
-            summary.Insert(0, specifiedMode
-                ? $"指定 DLL：{specifiedNames.Count} 种；实际复制：{copiedCount} 个；四个项目累计缺失：{missingCount} 个"
-                : $"全量 SIE DLL：共复制 {copiedCount} 个");
-            ResultTextBox.Text = string.Join(Environment.NewLine, summary);
+
+            if (!specifiedMode)
+            {
+                output.Add("获取全量DLL"); output.Add(string.Empty); output.Add("第1步：全量DLL数量");
+                for (var index = 0; index < DllProjectNames.Length; index++) output.Add($"{DllProjectNames[index]}  预计{sourceFilesByProject[index].Length}个DLL");
+                output.Add(string.Empty);
+            }
+
+            output.Add("第2步：清空原目录文件"); ShowOutput();
+            var prepareResult = await PrepareDllTargetDirectoriesAsync(_pathDetectionCts.Token);
+            output.AddRange(prepareResult.Messages); ShowOutput();
+            if (!prepareResult.Success)
+            {
+                output.Add("存在目录未能清空，不执行下一步操作。"); ShowOutput(); return;
+            }
+
+            output.Add(string.Empty); output.Add("第3步：获取DLL"); ShowOutput();
+            var totalCopied = 0;
+            for (var index = 0; index < DllProjectNames.Length; index++)
+            {
+                var copied = 0;
+                foreach (var sourceFile in sourceFilesByProject[index])
+                {
+                    File.Copy(sourceFile, Path.Combine(prepareResult.Directories[index], Path.GetFileName(sourceFile)), overwrite: true);
+                    copied++; totalCopied++;
+                }
+                output.Add($"目录：...\\SMOMDLL\\{DllProjectNames[index]}  已获取到{copied}个DLL"); ShowOutput();
+            }
+            DllCountTextBlock.Text = $"汇总：{totalCopied} 个";
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { ResultTextBox.Text = $"获取 DLL 失败：{ex.Message}"; }
+        catch (Exception ex) { output.Add($"获取 DLL 失败：{ex.Message}"); ShowOutput(); }
+        finally { GetDllButton.IsEnabled = true; PublishToServerButton.IsEnabled = true; }
+    }
+
+    /// <summary>以蓝色步骤标题和橙色数量渲染 DLL 获取结果；此方法只更新界面，不写日志数据库。</summary>
+    private void RenderDllOutput(IEnumerable<string> lines)
+    {
+        PublishLogRichTextBox.Document.Blocks.Clear();
+        foreach (var line in lines)
+        {
+            var isHeader = line is "获取指定DLL" or "获取全量DLL" || line.StartsWith("第1步：", StringComparison.Ordinal) || line.StartsWith("第2步：", StringComparison.Ordinal) || line.StartsWith("第3步：", StringComparison.Ordinal);
+            var isBlockingReason = line.Contains("请先填写指定DLL名", StringComparison.Ordinal)
+                || line.Contains("未能识别", StringComparison.Ordinal)
+                || line.Contains("不执行下一步", StringComparison.Ordinal)
+                || line.Contains("清空×", StringComparison.Ordinal)
+                || line.Contains("获取 DLL 失败", StringComparison.Ordinal);
+            var paragraph = new Paragraph { Margin = new Thickness(0, isHeader ? 4 : 2, 0, isHeader ? 5 : 2) };
+            if (isHeader)
+            {
+                paragraph.Inlines.Add(new Run(line) { Foreground = Brushes.SteelBlue, FontWeight = FontWeights.Bold });
+            }
+            else if (isBlockingReason)
+            {
+                paragraph.Inlines.Add(new Run(line) { Foreground = Brushes.Crimson, FontWeight = FontWeights.Bold });
+            }
+            else
+            {
+                // 只突出“预计N个DLL”和“已获取到N个DLL”中的数字。
+                var matches = System.Text.RegularExpressions.Regex.Matches(line, @"(?<=预计)\d+(?=个DLL)|(?<=已获取到)\d+(?=个DLL)");
+                var position = 0;
+                foreach (System.Text.RegularExpressions.Match match in matches)
+                {
+                    if (match.Index > position) paragraph.Inlines.Add(new Run(line[position..match.Index]));
+                    paragraph.Inlines.Add(new Run(match.Value) { Foreground = Brushes.DarkOrange, FontWeight = FontWeights.Bold });
+                    position = match.Index + match.Length;
+                }
+                if (position < line.Length) paragraph.Inlines.Add(new Run(line[position..]));
+                if (line.Length == 0) paragraph.Inlines.Add(new Run(" "));
+            }
+            PublishLogRichTextBox.Document.Blocks.Add(paragraph);
+        }
+        PublishLogRichTextBox.ScrollToEnd();
     }
 
     /// <summary>切换获取模式时立即更新预计 DLL 数量。</summary>
@@ -609,24 +1061,37 @@ public partial class MainWindow : Window
     private static string GetDllListFilePath() => Path.Combine(AppContext.BaseDirectory, "GetDLL.txt");
 
     /// <summary>清空并重新创建四个 DLL 目标目录；目录被占用时抛出明确错误。</summary>
-    private static string[] PrepareDllTargetDirectories()
+    private static async Task<(bool Success, string[] Directories, List<string> Messages)> PrepareDllTargetDirectoriesAsync(CancellationToken token)
     {
         var root = Path.Combine(AppContext.BaseDirectory, "SMOMDLL");
+        var rootExisted = Directory.Exists(root);
         Directory.CreateDirectory(root);
         var targets = DllProjectNames.Select(name => Path.Combine(root, name)).ToArray();
+        var anyTargetExisted = targets.Any(Directory.Exists);
+        var messages = new List<string>();
+        var allSucceeded = true;
         foreach (var target in targets)
         {
-            if (Directory.Exists(target))
+            var success = false;
+            string? lastError = null;
+            for (var attempt = 1; attempt <= 5; attempt++)
             {
-                try { Directory.Delete(target, recursive: true); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                token.ThrowIfCancellationRequested();
+                try
                 {
-                    throw new IOException($"无法清空目录“{target}”，其中的文件可能正被占用，请关闭后重试。", ex);
+                    if (Directory.Exists(target)) Directory.Delete(target, recursive: true);
+                    Directory.CreateDirectory(target);
+                    // 删除并重建后再次确认其中没有任何文件和子目录。
+                    if (Directory.EnumerateFileSystemEntries(target).Any()) throw new IOException("目录清空后仍存在内容。");
+                    success = true; break;
                 }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { lastError = ex.Message; if (attempt < 5) await Task.Delay(TimeSpan.FromSeconds(1), token); }
             }
-            Directory.CreateDirectory(target);
+            allSucceeded &= success;
+            messages.Add(success ? $"目录：...\\SMOMDLL\\{Path.GetFileName(target)}  清空✔" : $"目录：...\\SMOMDLL\\{Path.GetFileName(target)}  清空×（已尝试5次）：{lastError}");
         }
-        return targets;
+        if (!rootExisted || !anyTargetExisted) messages.Insert(0, "SMOMDLL相关目录不存在，已经自动为您创建。");
+        return (allSucceeded, targets, messages);
     }
 
     /// <summary>在后台定位 Projects\SMOM 目录，并在界面上显示四个完整输出路径。</summary>

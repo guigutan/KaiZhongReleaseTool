@@ -1,0 +1,10 @@
+<Window x:Class="KaiZhongReleaseTool.DeleteServerConfirmationWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="删除服务器确认" Icon="imges/logo64.ico" Height="330" Width="540" ResizeMode="NoResize" WindowStartupLocation="CenterOwner">
+    <Grid Margin="30"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,18"><TextBlock Text="确认删除服务器" FontSize="24" FontWeight="SemiBold" Foreground="#B42335"/><TextBlock x:Name="ServerNameTextBlock" Foreground="{StaticResource MutedBrush}" Margin="0,7,0,0" TextWrapping="Wrap"/></StackPanel>
+        <Border Grid.Row="1" Background="#FFF0F1" BorderBrush="#F6C7CD" BorderThickness="1" CornerRadius="10" Padding="12"><TextBlock Text="删除后无法从工具中恢复此服务器配置。此操作不会删除远程服务器上的文件。" Foreground="#9F2635" TextWrapping="Wrap"/></Border>
+        <TextBlock Grid.Row="2" Margin="0,18,0,7"><Run Text="请输入："/><Run Text="我确认删除" FontWeight="Bold" Foreground="#B42335"/></TextBlock>
+        <TextBox x:Name="ConfirmationTextBox"  Grid.Row="3"  Padding="3" VerticalAlignment="Top" TextChanged="ConfirmationTextBox_TextChanged"/>
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0"><Button Content="取消" Width="95" Background="#94A3B8" Margin="0,0,10,0" Click="Cancel_Click"/><Button x:Name="DeleteButton" Content="确认删除" Width="105" Background="#D9485A" IsEnabled="False" Click="Delete_Click"/></StackPanel>
+    </Grid>
+</Window>

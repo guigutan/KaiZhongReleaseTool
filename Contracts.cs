@@ -69,3 +69,77 @@ public sealed class CommandResponse
     /// <summary>快速创建失败响应。</summary>
     public static CommandResponse Fail(string message) => new() { Success = false, Message = message };
 }
+
+/// <summary>客户端发给服务端的发布前目录备份请求。</summary>
+public sealed class ServerBackupRequest
+{
+    public string? LogSetName { get; set; }
+    /// <summary>客户端发出发布指令时生成的十四位时间戳。</summary>
+    public string Timestamp { get; set; } = string.Empty;
+    public string? ScheduleServerPath { get; set; }
+    public string? WebApiHostPath { get; set; }
+    public string? WebClientPath { get; set; }
+    public string? WpfClientPath { get; set; }
+    /// <summary>服务端本机保存 ZIP 文件的目标目录。</summary>
+    public string? BackupDestinationPath { get; set; }
+}
+
+/// <summary>备份成功后，服务端执行应用发布时使用的配置。</summary>
+public class DeploymentApplyRequest
+{
+    public string? LogSetName { get; set; }
+    public string? ScheduleServerPath { get; set; }
+    public string? WebApiHostPath { get; set; }
+    public string? WebClientPath { get; set; }
+    public string? WpfClientPath { get; set; }
+    public string? ScheduleServerServices { get; set; }
+    public string? WebApiHostServices { get; set; }
+    public string? WebClientServices { get; set; }
+    public string? WpfClientServices { get; set; }
+}
+
+/// <summary>发布阶段中单个应用或服务的执行结果。</summary>
+public sealed class DeploymentStageItem
+{
+    public string ApplicationName { get; set; } = string.Empty;
+    public string ServiceName { get; set; } = string.Empty;
+    public bool HasFiles { get; set; }
+    public bool HasBackupPath { get; set; }
+    public bool HasServices { get; set; }
+    public bool Success { get; set; }
+    public int Attempts { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string? Version { get; set; }
+}
+
+/// <summary>服务端某个发布阶段返回的明细。</summary>
+public sealed class DeploymentStageResponse
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public List<DeploymentStageItem> Items { get; set; } = new();
+}
+
+/// <summary>查询或执行发布回滚时使用的服务器配置。</summary>
+public sealed class DeploymentRollbackRequest : DeploymentApplyRequest
+{
+    public string? BackupDestinationPath { get; set; }
+    public string? BackupFileName { get; set; }
+}
+
+/// <summary>服务端目录浏览接口返回的数据。</summary>
+public sealed class DirectoryBrowseResponse
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string? CurrentPath { get; set; }
+    public string? ParentPath { get; set; }
+    public List<RemoteDirectoryEntry> Directories { get; set; } = new();
+}
+
+/// <summary>远程服务端中的一个磁盘或文件夹。</summary>
+public sealed class RemoteDirectoryEntry
+{
+    public string Name { get; set; } = string.Empty;
+    public string FullPath { get; set; } = string.Empty;
+}

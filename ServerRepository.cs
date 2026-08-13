@@ -10,9 +10,13 @@ public sealed class ServerRepository
 
     public ServerRepository()
     {
-        var dataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KaiZhongReleaseTool");
-        Directory.CreateDirectory(dataDirectory);
-        var databasePath = Path.Combine(dataDirectory, "servers.db");
+        // 数据库放在 EXE 同级目录，复制整套工具给其他用户后可直接复用服务器配置。
+        var databasePath = Path.Combine(AppContext.BaseDirectory, "servers.db");
+        var legacyDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KaiZhongReleaseTool");
+        var legacyDatabasePath = Path.Combine(legacyDirectory, "servers.db");
+        // 新版首次运行时自动迁移旧版保存在当前用户目录中的数据库。
+        if (!File.Exists(databasePath) && File.Exists(legacyDatabasePath))
+            File.Copy(legacyDatabasePath, databasePath);
         _connectionString = new SqliteConnectionStringBuilder { DataSource = databasePath }.ToString();
         Initialize();
     }
@@ -32,6 +36,15 @@ public sealed class ServerRepository
             Username TEXT NOT NULL DEFAULT '',
             Password TEXT NOT NULL DEFAULT '',
             RemoteDesktopPort INTEGER NOT NULL DEFAULT 3389,
+            ScheduleServerBackupPath TEXT NOT NULL DEFAULT '',
+            WebApiHostBackupPath TEXT NOT NULL DEFAULT '',
+            WebClientBackupPath TEXT NOT NULL DEFAULT '',
+            WpfClientBackupPath TEXT NOT NULL DEFAULT '',
+            BackupDestinationPath TEXT NOT NULL DEFAULT '',
+            ScheduleServerServiceName TEXT NOT NULL DEFAULT '',
+            WebApiHostServiceName TEXT NOT NULL DEFAULT '',
+            WebClientServiceName TEXT NOT NULL DEFAULT '',
+            WpfClientServiceName TEXT NOT NULL DEFAULT '',
             UNIQUE(Host, Port)
         );";
         command.ExecuteNonQuery();
@@ -40,6 +53,15 @@ public sealed class ServerRepository
         AddColumnIfMissing(connection, "Username", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "Password", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "RemoteDesktopPort", "INTEGER NOT NULL DEFAULT 3389");
+        AddColumnIfMissing(connection, "ScheduleServerBackupPath", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "WebApiHostBackupPath", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "WebClientBackupPath", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "WpfClientBackupPath", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "BackupDestinationPath", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "ScheduleServerServiceName", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "WebApiHostServiceName", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "WebClientServiceName", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "WpfClientServiceName", "TEXT NOT NULL DEFAULT ''");
         using var groupCommand = connection.CreateCommand();
         groupCommand.CommandText = @"CREATE TABLE IF NOT EXISTS Groups (
             Id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,13 +80,17 @@ public sealed class ServerRepository
         using var connection = new SqliteConnection(_connectionString);
         connection.Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id, Name, GroupName, Host, Port, Username, Password, RemoteDesktopPort FROM Servers ORDER BY GroupName, Name;";
+        command.CommandText = "SELECT Id, Name, GroupName, Host, Port, Username, Password, RemoteDesktopPort, ScheduleServerBackupPath, WebApiHostBackupPath, WebClientBackupPath, WpfClientBackupPath, BackupDestinationPath, ScheduleServerServiceName, WebApiHostServiceName, WebClientServiceName, WpfClientServiceName FROM Servers ORDER BY GroupName, Name;";
         using var reader = command.ExecuteReader();
         while (reader.Read())
             result.Add(new ServerProfile
             {
                 Id = reader.GetInt64(0), Name = reader.GetString(1), GroupName = reader.GetString(2), Host = reader.GetString(3), Port = reader.GetInt32(4),
-                Username = reader.GetString(5), Password = reader.GetString(6), RemoteDesktopPort = reader.GetInt32(7)
+                Username = reader.GetString(5), Password = reader.GetString(6), RemoteDesktopPort = reader.GetInt32(7),
+                ScheduleServerBackupPath = reader.GetString(8), WebApiHostBackupPath = reader.GetString(9),
+                WebClientBackupPath = reader.GetString(10), WpfClientBackupPath = reader.GetString(11), BackupDestinationPath = reader.GetString(12),
+                ScheduleServerServiceName = reader.GetString(13), WebApiHostServiceName = reader.GetString(14),
+                WebClientServiceName = reader.GetString(15), WpfClientServiceName = reader.GetString(16)
             });
         return result;
     }
@@ -75,7 +101,7 @@ public sealed class ServerRepository
         using var connection = new SqliteConnection(_connectionString);
         connection.Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO Servers(Name, GroupName, Host, Port, Username, Password, RemoteDesktopPort) VALUES($name, $groupName, $host, $port, $username, $password, $rdpPort); SELECT last_insert_rowid();";
+        command.CommandText = "INSERT INTO Servers(Name, GroupName, Host, Port, Username, Password, RemoteDesktopPort, ScheduleServerBackupPath, WebApiHostBackupPath, WebClientBackupPath, WpfClientBackupPath, BackupDestinationPath, ScheduleServerServiceName, WebApiHostServiceName, WebClientServiceName, WpfClientServiceName) VALUES($name, $groupName, $host, $port, $username, $password, $rdpPort, $scheduleBackup, $apiBackup, $webBackup, $wpfBackup, $backupDestination, $scheduleService, $apiService, $webService, $wpfService); SELECT last_insert_rowid();";
         AddParameters(command, server);
         return (long)(command.ExecuteScalar() ?? 0L);
     }
@@ -86,7 +112,7 @@ public sealed class ServerRepository
         using var connection = new SqliteConnection(_connectionString);
         connection.Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE Servers SET Name=$name, GroupName=$groupName, Host=$host, Port=$port, Username=$username, Password=$password, RemoteDesktopPort=$rdpPort WHERE Id=$id;";
+        command.CommandText = "UPDATE Servers SET Name=$name, GroupName=$groupName, Host=$host, Port=$port, Username=$username, Password=$password, RemoteDesktopPort=$rdpPort, ScheduleServerBackupPath=$scheduleBackup, WebApiHostBackupPath=$apiBackup, WebClientBackupPath=$webBackup, WpfClientBackupPath=$wpfBackup, BackupDestinationPath=$backupDestination, ScheduleServerServiceName=$scheduleService, WebApiHostServiceName=$apiService, WebClientServiceName=$webService, WpfClientServiceName=$wpfService WHERE Id=$id;";
         AddParameters(command, server);
         command.Parameters.AddWithValue("$id", server.Id);
         command.ExecuteNonQuery();
@@ -168,6 +194,15 @@ public sealed class ServerRepository
         command.Parameters.AddWithValue("$username", server.Username);
         command.Parameters.AddWithValue("$password", server.Password);
         command.Parameters.AddWithValue("$rdpPort", server.RemoteDesktopPort);
+        command.Parameters.AddWithValue("$scheduleBackup", server.ScheduleServerBackupPath);
+        command.Parameters.AddWithValue("$apiBackup", server.WebApiHostBackupPath);
+        command.Parameters.AddWithValue("$webBackup", server.WebClientBackupPath);
+        command.Parameters.AddWithValue("$wpfBackup", server.WpfClientBackupPath);
+        command.Parameters.AddWithValue("$backupDestination", server.BackupDestinationPath);
+        command.Parameters.AddWithValue("$scheduleService", server.ScheduleServerServiceName);
+        command.Parameters.AddWithValue("$apiService", server.WebApiHostServiceName);
+        command.Parameters.AddWithValue("$webService", server.WebClientServiceName);
+        command.Parameters.AddWithValue("$wpfService", server.WpfClientServiceName);
     }
 
     /// <summary>数据库升级时，仅在字段不存在的情况下执行 ALTER TABLE。</summary>

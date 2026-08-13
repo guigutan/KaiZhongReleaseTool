@@ -25,6 +25,24 @@ public sealed class ServerProfile : INotifyPropertyChanged
     public string Password { get; set; } = string.Empty;
     /// <summary>远程桌面端口，与发布工具服务端口相互独立。</summary>
     public int RemoteDesktopPort { get; set; } = 3389;
+    /// <summary>发布前需要备份的 SIE.ScheduleServer 目录，留空表示跳过。</summary>
+    public string ScheduleServerBackupPath { get; set; } = string.Empty;
+    /// <summary>发布前需要备份的 SIE.WebApiHost 目录，留空表示跳过。</summary>
+    public string WebApiHostBackupPath { get; set; } = string.Empty;
+    /// <summary>发布前需要备份的 WebClient 目录，留空表示跳过。</summary>
+    public string WebClientBackupPath { get; set; } = string.Empty;
+    /// <summary>发布前需要备份的 WpfClient 目录，留空表示跳过。</summary>
+    public string WpfClientBackupPath { get; set; } = string.Empty;
+    /// <summary>服务端保存时间戳 ZIP 备份文件的目录。</summary>
+    public string BackupDestinationPath { get; set; } = string.Empty;
+    /// <summary>SIE.ScheduleServer 发布时需要停止并重启的 Windows 服务名，留空表示不处理。</summary>
+    public string ScheduleServerServiceName { get; set; } = string.Empty;
+    /// <summary>SIE.WebApiHost 发布时需要停止并重启的 Windows 服务名，留空表示不处理。</summary>
+    public string WebApiHostServiceName { get; set; } = string.Empty;
+    /// <summary>WebClient 发布时需要停止并重启的 Windows 服务名，留空表示不处理。</summary>
+    public string WebClientServiceName { get; set; } = string.Empty;
+    /// <summary>WpfClient 发布时需要停止并重启的 Windows 服务名，留空表示不处理。</summary>
+    public string WpfClientServiceName { get; set; } = string.Empty;
     /// <summary>根据主机和端口生成的服务端根地址。</summary>
     public string BaseUrl => $"http://{Host}:{Port}/";
 

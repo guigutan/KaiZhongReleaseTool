@@ -11,12 +11,12 @@
 using System;
 using System.Reflection;
 
-[assembly: System.Reflection.AssemblyCompanyAttribute("KaiZhongReleaseTool")]
+[assembly: System.Reflection.AssemblyCompanyAttribute("凯中发布工具")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+255e8def11448ae5a411490e1a8575f69dd915e1")]
-[assembly: System.Reflection.AssemblyProductAttribute("KaiZhongReleaseTool")]
-[assembly: System.Reflection.AssemblyTitleAttribute("KaiZhongReleaseTool")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+4b8c7690e8a1d3d923631b30797995c9918b0b62")]
+[assembly: System.Reflection.AssemblyProductAttribute("凯中发布工具")]
+[assembly: System.Reflection.AssemblyTitleAttribute("凯中发布工具")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
 [assembly: System.Runtime.Versioning.TargetPlatformAttribute("Windows7.0")]
 [assembly: System.Runtime.Versioning.SupportedOSPlatformAttribute("Windows7.0")]

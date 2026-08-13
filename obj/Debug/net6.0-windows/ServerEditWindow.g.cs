@@ -181,7 +181,7 @@ namespace KaiZhongReleaseTool {
                 return;
             }
             _contentLoaded = true;
-            System.Uri resourceLocater = new System.Uri("/KaiZhongReleaseTool;component/servereditwindow.xaml", System.UriKind.Relative);
+            System.Uri resourceLocater = new System.Uri("/凯中发布工具;component/servereditwindow.xaml", System.UriKind.Relative);
             
             #line 1 "..\..\..\ServerEditWindow.xaml"
             System.Windows.Application.LoadComponent(this, resourceLocater);

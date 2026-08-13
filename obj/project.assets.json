@@ -335,7 +335,7 @@
     "version": "1.0.0",
     "restore": {
       "projectUniqueName": "D:\\myproject\\KaiZhongReleaseTool\\KaiZhongReleaseTool.csproj",
-      "projectName": "KaiZhongReleaseTool",
+      "projectName": "凯中发布工具",
       "projectPath": "D:\\myproject\\KaiZhongReleaseTool\\KaiZhongReleaseTool.csproj",
       "packagesPath": "C:\\Users\\00158137\\.nuget\\packages\\",
       "outputPath": "D:\\myproject\\KaiZhongReleaseTool\\obj\\",

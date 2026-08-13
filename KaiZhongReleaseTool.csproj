@@ -9,6 +9,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>imges\logo128.ico</ApplicationIcon>
     <DefaultItemExcludes>$(DefaultItemExcludes);KaiZhongReleaseTool.Server\obj\**;KaiZhongReleaseTool.Server\bin\**;KaiZhongReleaseTool.Shared\obj\**;KaiZhongReleaseTool.Shared\bin\**</DefaultItemExcludes>
+    <AssemblyName>凯中发布工具</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>

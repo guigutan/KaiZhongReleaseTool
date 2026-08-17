@@ -25,6 +25,8 @@ public sealed class ServerProfile : INotifyPropertyChanged
     public string Password { get; set; } = string.Empty;
     /// <summary>远程桌面端口，与发布工具服务端口相互独立。</summary>
     public int RemoteDesktopPort { get; set; } = 3389;
+    /// <summary>发布应用程序时所在的发布梯队，只允许第 1 或第 2 梯队。</summary>
+    public int ReleaseTier { get; set; } = 2;
     /// <summary>发布前需要备份的 SIE.ScheduleServer 目录，留空表示跳过。</summary>
     public string ScheduleServerBackupPath { get; set; } = string.Empty;
     /// <summary>发布前需要备份的 SIE.WebApiHost 目录，留空表示跳过。</summary>

@@ -8,7 +8,7 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>imges\logo128.ico</ApplicationIcon>
-    <DefaultItemExcludes>$(DefaultItemExcludes);KaiZhongReleaseTool.Server\obj\**;KaiZhongReleaseTool.Server\bin\**;KaiZhongReleaseTool.Shared\obj\**;KaiZhongReleaseTool.Shared\bin\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);KaiZhongReleaseTool.Server\obj\**;KaiZhongReleaseTool.Server\bin\**;KaiZhongReleaseTool.Server.Updater\obj\**;KaiZhongReleaseTool.Server.Updater\bin\**;KaiZhongReleaseTool.Shared\obj\**;KaiZhongReleaseTool.Shared\bin\**</DefaultItemExcludes>
     <AssemblyName>凯中发布工具</AssemblyName>
   </PropertyGroup>
 
@@ -20,6 +20,12 @@
   <ItemGroup>
     <None Remove="imges\*.ico;imges\*.png" />
     <Resource Include="imges\*.ico;imges\*.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 服务端已拆分为独立 Windows 服务，不再编译进客户端 WPF。 -->
+    <Compile Remove="ServerHost.cs;ServerWindow.xaml.cs;RoleSelectionWindow.xaml.cs;KaiZhongReleaseTool.Server\**\*.cs;KaiZhongReleaseTool.Server.Updater\**\*.cs" />
+    <Page Remove="ServerWindow.xaml;RoleSelectionWindow.xaml" />
   </ItemGroup>
 
   <ItemGroup>

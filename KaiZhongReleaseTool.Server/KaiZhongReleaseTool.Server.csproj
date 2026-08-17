@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>KaiZhongReleaseTool.Server</AssemblyName>
+    <RootNamespace>KaiZhongReleaseTool</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="6.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\ServerHost.cs" Link="ServerHost.cs" />
+    <Compile Include="..\Contracts.cs" Link="Contracts.cs" />
+    <Compile Include="..\AppPaths.cs" Link="AppPaths.cs" />
+  </ItemGroup>
+</Project>

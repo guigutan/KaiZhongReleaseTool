@@ -10,6 +10,8 @@ using System.Globalization;
 using System.Diagnostics;
 using System.Xml.Linq;
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Reflection;
 
 namespace KaiZhongReleaseTool;
 
@@ -19,7 +21,6 @@ namespace KaiZhongReleaseTool;
 public sealed class ServerHost : IAsyncDisposable
 {
     private WebApplication? _app;
-    private readonly LogRepository _logRepository = new();
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> _rollbackStoppedServices = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>服务是否已经成功启动。</summary>
     public bool IsRunning => _app is not null;
@@ -30,6 +31,14 @@ public sealed class ServerHost : IAsyncDisposable
     public async Task StartAsync(string url)
     {
         if (_app is not null) return;
+
+        // ASP.NET Core 会把超过内存阈值的 multipart 上传文件先缓冲到临时目录。
+        // 固定使用程序同级 Temp，避免域用户或远程会话返回不存在的 Temp\会话编号目录。
+        AppPaths.EnsureServerDirectories();
+        var aspNetCoreTempDirectory = AppPaths.ServerTempDirectory;
+        Environment.SetEnvironmentVariable(
+            "ASPNETCORE_TEMP", aspNetCoreTempDirectory, EnvironmentVariableTarget.Process);
+
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls(url);
         // 文件夹上传大小不固定，取消 Kestrel 默认的请求体大小上限。
@@ -39,7 +48,8 @@ public sealed class ServerHost : IAsyncDisposable
         builder.Services.AddSingleton<CommandExecutor>();
         var app = builder.Build();
         // 根地址用于快速判断服务是否在线。
-        app.MapGet("/", () => Results.Ok(new { name = "KaiZhongReleaseTool", status = "running", apiVersion = 2, directoryBrowser = true }));
+        app.MapGet("/", () => Results.Ok(new { name = "KaiZhongReleaseTool.Server", status = "running", apiVersion = 3, version = GetServerVersion(), directoryBrowser = true }));
+        app.MapPost("/api/system/update", ReceiveServerUpdateAsync);
         app.MapGet("/api/directories", (string? path) => BrowseServerDirectories(path));
         // 客户端把所有文件和服务指令发送到这个统一接口。
         app.MapPost("/api/command", async (CommandRequest request, CommandExecutor executor, CancellationToken token) =>
@@ -69,6 +79,7 @@ public sealed class ServerHost : IAsyncDisposable
         {
             await app.StartAsync();
             _app = app;
+            Log($"上传临时目录：{aspNetCoreTempDirectory}");
             Log($"服务已启动：{url}");
         }
         catch { await app.DisposeAsync(); throw; }
@@ -91,10 +102,65 @@ public sealed class ServerHost : IAsyncDisposable
     /// <summary>服务端只把本机实际执行的发布或回滚信息写入同级 log.db。</summary>
     private void WriteServerLog(string? setName, string message, string level, string type = "Push", string? backupFileName = null)
     {
-        if (string.IsNullOrWhiteSpace(setName)) return;
-        _logRepository.CreateSet(setName, type, backupFileName);
-        _logRepository.Append(setName, message, level, Environment.MachineName);
+        // 服务端不保存业务日志数据库；完整发布与回滚日志统一由客户端保存。
     }
+
+    /// <summary>接收经过密钥和 SHA-256 校验的服务升级包，并交给独立更新器完成替换和重启。</summary>
+    private async Task<IResult> ReceiveServerUpdateAsync(HttpRequest request, CancellationToken token)
+    {
+        try
+        {
+            var form = await request.ReadFormAsync(token);
+            var package = form.Files.GetFile("updatePackage");
+            var expectedHash = form["sha256"].ToString();
+            if (package is null || package.Length == 0)
+                return Results.BadRequest(CommandResponse.Fail("没有收到服务端升级包。"));
+
+            var updateId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            var workDirectory = Path.Combine(AppPaths.ServerUpdateDirectory, updateId);
+            Directory.CreateDirectory(workDirectory);
+            var packagePath = Path.Combine(workDirectory, "ServerUpdate.zip");
+            await using (var output = File.Create(packagePath)) await package.CopyToAsync(output, token);
+
+            await using (var input = File.OpenRead(packagePath))
+            {
+                using var sha256 = SHA256.Create();
+                var actualHash = Convert.ToHexString(await sha256.ComputeHashAsync(input, token));
+                if (!actualHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
+                    return Results.BadRequest(CommandResponse.Fail("升级包 SHA-256 校验失败。"));
+            }
+
+            using (var archive = ZipFile.OpenRead(packagePath))
+                if (!archive.Entries.Any(item => item.FullName.EndsWith("KaiZhongReleaseTool.Server.dll", StringComparison.OrdinalIgnoreCase)))
+                    return Results.BadRequest(CommandResponse.Fail("升级包中缺少凯中发布工具服务文件。"));
+
+            var updaterName = "KaiZhongReleaseTool.Server.Updater";
+            foreach (var file in Directory.GetFiles(AppContext.BaseDirectory, updaterName + ".*"))
+                File.Copy(file, Path.Combine(workDirectory, Path.GetFileName(file)), true);
+            var updaterPath = Path.Combine(workDirectory, updaterName + ".exe");
+            if (!File.Exists(updaterPath))
+                return Results.BadRequest(CommandResponse.Fail("当前服务端缺少独立更新器，请先重新安装一次服务。"));
+
+            var backupDirectory = Path.Combine(AppPaths.ServerUpdateDirectory, "Backup-" + updateId);
+            var startInfo = new ProcessStartInfo(updaterPath) { UseShellExecute = false, CreateNoWindow = true };
+            startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
+            startInfo.ArgumentList.Add(packagePath);
+            startInfo.ArgumentList.Add(AppContext.BaseDirectory);
+            startInfo.ArgumentList.Add(backupDirectory);
+            Process.Start(startInfo);
+
+            // 先把“已接受更新”返回客户端，再退出旧服务进程供更新器覆盖。
+            _ = Task.Run(async () => { await Task.Delay(1500); Environment.Exit(0); });
+            return Results.Accepted(value: CommandResponse.Ok($"升级包已接收，当前版本：{GetServerVersion()}，服务即将自动重启。"));
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(CommandResponse.Fail($"服务端自动更新失败：{ex.Message}"));
+        }
+    }
+
+    private static string GetServerVersion() =>
+        Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0.0";
 
     /// <summary>接收客户端上传的 ZIP，并解压到指定的服务端文件夹。</summary>
     private async Task<IResult> ReceiveFolderAsync(HttpRequest request, CancellationToken token)
@@ -114,7 +180,7 @@ public sealed class ServerHost : IAsyncDisposable
                 return Results.BadRequest(CommandResponse.Fail("服务端保存路径不能为空。"));
 
             var destination = Path.GetFullPath(destinationValue);
-            tempZip = Path.Combine(Path.GetTempPath(), $"KaiZhongReceive_{Guid.NewGuid():N}.zip");
+            tempZip = CreateServerTemporaryPath("KaiZhongReceive", ".zip");
             Log($"开始接收文件夹：{archive.Length:N0} 字节，目标：{destination}");
             await using (var output = File.Create(tempZip))
                 await archive.CopyToAsync(output, token);
@@ -133,7 +199,7 @@ public sealed class ServerHost : IAsyncDisposable
         }
         finally
         {
-            if (tempZip is not null && File.Exists(tempZip)) File.Delete(tempZip);
+            TryDeleteTemporaryFile(tempZip);
         }
     }
 
@@ -152,11 +218,14 @@ public sealed class ServerHost : IAsyncDisposable
                 return Results.BadRequest(CommandResponse.Fail("没有收到 SMOMDLL 压缩数据。"));
 
             // 必须先完整接收到系统临时目录，确认上传完成后才清理正式目录。
-            tempZip = Path.Combine(Path.GetTempPath(), $"KaiZhongSmomDll_{Guid.NewGuid():N}.zip");
+            // 使用程序同级临时目录，避免远程会话返回了不存在的“Temp\会话编号”目录。
+            var tempDirectory = AppPaths.ServerTempDirectory;
+            Directory.CreateDirectory(tempDirectory);
+            tempZip = Path.Combine(tempDirectory, $"KaiZhongSmomDll_{Guid.NewGuid():N}.zip");
             await using (var output = File.Create(tempZip))
                 await archive.CopyToAsync(output, token);
 
-            var targetDirectory = Path.Combine(AppContext.BaseDirectory, "SMOMDLL");
+            var targetDirectory = AppPaths.ServerSmomDllDirectory;
             Log($"开始更新 SMOMDLL：收到 {archive.Length:N0} 字节，目标：{targetDirectory}");
             if (Directory.Exists(targetDirectory))
             {
@@ -181,7 +250,7 @@ public sealed class ServerHost : IAsyncDisposable
         }
         finally
         {
-            if (tempZip is not null && File.Exists(tempZip)) File.Delete(tempZip);
+            TryDeleteTemporaryFile(tempZip);
         }
     }
 
@@ -193,22 +262,23 @@ public sealed class ServerHost : IAsyncDisposable
             if (!DateTime.TryParseExact(request.Timestamp, "yyyyMMdd-HHmmss", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
                 return Task.FromResult(Results.BadRequest(CommandResponse.Fail("备份时间戳格式无效。")) as IResult);
 
-            var smomRoot = Path.Combine(AppContext.BaseDirectory, "SMOMDLL");
+            var smomRoot = AppPaths.ServerSmomDllDirectory;
             var configuredPaths = new[]
             {
                 (Label: "SIE.ScheduleServer", Path: request.ScheduleServerPath),
                 (Label: "SIE.WebApiHost", Path: request.WebApiHostPath),
                 (Label: "WebClient", Path: request.WebClientPath),
                 (Label: "WpfClient", Path: request.WpfClientPath)
-            }.Where(item => Directory.Exists(Path.Combine(smomRoot, item.Label)) && Directory.EnumerateFiles(Path.Combine(smomRoot, item.Label), "*", SearchOption.AllDirectories).Any()).ToArray();
+            }.Where(item => !string.IsNullOrWhiteSpace(item.Path)
+                && Directory.Exists(Path.Combine(smomRoot, item.Label))
+                && Directory.EnumerateFiles(Path.Combine(smomRoot, item.Label), "*", SearchOption.AllDirectories).Any()).ToArray();
 
             if (configuredPaths.Length == 0)
                 return Task.FromResult(Results.Ok(CommandResponse.Ok("未配置备份目录，已跳过备份。")) as IResult);
 
             var sources = configuredPaths.Select(item =>
             {
-                if (string.IsNullOrWhiteSpace(item.Path)) throw new InvalidOperationException($"{item.Label} 有待发布文件，但未配置发布前备份目录。");
-                var fullPath = Path.GetFullPath(item.Path);
+                var fullPath = Path.GetFullPath(item.Path!);
                 if (!Directory.Exists(fullPath)) throw new DirectoryNotFoundException($"{item.Label} 备份目录不存在：{fullPath}");
                 return (item.Label, FullPath: fullPath);
             }).ToArray();
@@ -259,7 +329,7 @@ public sealed class ServerHost : IAsyncDisposable
     {
         try
         {
-            var smomRoot = Path.Combine(AppContext.BaseDirectory, "SMOMDLL");
+            var smomRoot = AppPaths.ServerSmomDllDirectory;
             var messages = new List<string>();
             var success = true;
             success &= await ApplyApplicationAsync("SIE.ScheduleServer", Path.Combine(smomRoot, "SIE.ScheduleServer"), request.ScheduleServerPath, request.ScheduleServerServices, false, messages, token);
@@ -280,30 +350,67 @@ public sealed class ServerHost : IAsyncDisposable
     /// <summary>检查四个应用是否有待发布文件，以及所需路径和服务是否已配置。</summary>
     private IResult CheckDeployment(DeploymentApplyRequest request)
     {
-        var root = Path.Combine(AppContext.BaseDirectory, "SMOMDLL");
+        var root = AppPaths.ServerSmomDllDirectory;
         var items = GetApplicationSettings(request).Select(item =>
         {
             var source = Path.Combine(root, item.Name);
             var hasFiles = Directory.Exists(source) && Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories).Any();
+            var backupPathConfigured = !string.IsNullOrWhiteSpace(item.Path);
+            var backupPathExists = backupPathConfigured && IsExistingDirectory(item.Path!);
+            var serviceNames = ParseServiceNames(item.Services);
+            var servicesConfigured = serviceNames.Length > 0;
+            var servicesExist = servicesConfigured && serviceNames.All(ServiceExists);
+
+            // 未配置路径表示本服务器不发布该应用，不因上传目录中有文件而阻断。
+            // 已配置的路径、服务必须真实存在；除 WpfClient 外，配置路径后必须配置服务。
+            var configuredPathPassed = !backupPathConfigured || backupPathExists;
+            var configuredServicesPassed = !servicesConfigured || servicesExist;
+            var requiredServicePassed = item.Name == "WpfClient" || !backupPathConfigured || servicesConfigured;
+            var success = configuredPathPassed && configuredServicesPassed && requiredServicePassed;
             return new DeploymentStageItem
             {
-                ApplicationName = item.Name, HasFiles = hasFiles,
-                HasBackupPath = !string.IsNullOrWhiteSpace(item.Path), HasServices = ParseServiceNames(item.Services).Length > 0,
-                Success = !hasFiles || !string.IsNullOrWhiteSpace(item.Path)
+                ApplicationName = item.Name,
+                HasFiles = hasFiles,
+                HasBackupPath = backupPathExists,
+                HasServices = servicesExist,
+                BackupPathConfigured = backupPathConfigured,
+                BackupPathExists = backupPathExists,
+                ServicesConfigured = servicesConfigured,
+                ServicesExist = servicesExist,
+                Success = success
             };
         }).ToList();
         var success = items.All(item => item.Success);
-        foreach (var item in items) WriteServerLog(request.LogSetName, $"{item.ApplicationName}[文件{(item.HasFiles ? "✔" : "×")}，备份路径{(item.HasBackupPath ? "✔" : "×")}，服务{(item.HasServices ? "✔" : "×")}]", item.HasFiles && !item.HasBackupPath ? "Error" : item.HasFiles && !item.HasServices ? "Warning" : "Success");
-        return Results.Json(new DeploymentStageResponse { Success = success, Message = success ? "服务器配置检查通过。" : "存在有待发布文件但未配置备份路径的应用。", Items = items }, statusCode: success ? 200 : 400);
+        return Results.Json(new DeploymentStageResponse { Success = success, Message = success ? "服务器配置检查通过。" : "存在不满足发布条件的服务器配置。", Items = items }, statusCode: success ? 200 : 400);
+    }
+
+    /// <summary>安全检查服务端目录是否真实存在，非法路径按不存在处理。</summary>
+    private static bool IsExistingDirectory(string path)
+    {
+        try { return Directory.Exists(Path.GetFullPath(path)); }
+        catch { return false; }
+    }
+
+    /// <summary>通过 Windows 服务注册表项判断服务名是否真实存在。</summary>
+    private static bool ServiceExists(string serviceName)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{serviceName}");
+            return key is not null;
+        }
+        catch { return false; }
     }
 
     /// <summary>停止所有本次有待发布文件的应用服务；服务名为空时直接跳过。</summary>
     private async Task<IResult> StopDeploymentServicesAsync(DeploymentApplyRequest request, CancellationToken token)
     {
-        var root = Path.Combine(AppContext.BaseDirectory, "SMOMDLL");
+        var root = AppPaths.ServerSmomDllDirectory;
         var results = new List<DeploymentStageItem>();
         foreach (var app in GetApplicationSettings(request))
         {
+            if (string.IsNullOrWhiteSpace(app.Path)) continue;
             var source = Path.Combine(root, app.Name);
             if (!Directory.Exists(source) || !Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories).Any()) continue;
             foreach (var service in ParseServiceNames(app.Services))
@@ -320,17 +427,13 @@ public sealed class ServerHost : IAsyncDisposable
     /// <summary>仅覆盖本次有文件的应用，不在此阶段控制服务。</summary>
     private async Task<IResult> PublishDeploymentFilesAsync(DeploymentApplyRequest request, CancellationToken token)
     {
-        var root = Path.Combine(AppContext.BaseDirectory, "SMOMDLL");
+        var root = AppPaths.ServerSmomDllDirectory;
         var results = new List<DeploymentStageItem>();
         foreach (var app in GetApplicationSettings(request))
         {
+            if (string.IsNullOrWhiteSpace(app.Path)) continue;
             var source = Path.Combine(root, app.Name);
             if (!Directory.Exists(source) || !Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories).Any()) continue;
-            if (string.IsNullOrWhiteSpace(app.Path))
-            {
-                results.Add(new DeploymentStageItem { ApplicationName = app.Name, Success = false, Attempts = 0, Message = "未配置目标目录。" });
-                continue;
-            }
             string? version = null;
             var result = await RetryAsync(() =>
             {
@@ -347,10 +450,11 @@ public sealed class ServerHost : IAsyncDisposable
     /// <summary>启动所有本次有待发布文件的应用服务，每个服务失败后最多重试十次。</summary>
     private async Task<IResult> StartDeploymentServicesAsync(DeploymentApplyRequest request, CancellationToken token)
     {
-        var root = Path.Combine(AppContext.BaseDirectory, "SMOMDLL");
+        var root = AppPaths.ServerSmomDllDirectory;
         var results = new List<DeploymentStageItem>();
         foreach (var app in GetApplicationSettings(request))
         {
+            if (string.IsNullOrWhiteSpace(app.Path)) continue;
             var source = Path.Combine(root, app.Name);
             if (!Directory.Exists(source) || !Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories).Any()) continue;
             foreach (var service in ParseServiceNames(app.Services))
@@ -415,7 +519,8 @@ public sealed class ServerHost : IAsyncDisposable
         string? temporary = null;
         try
         {
-            temporary = Path.Combine(Path.GetTempPath(), $"KaiZhongRollbackFiles_{Guid.NewGuid():N}"); ZipFile.ExtractToDirectory(ResolveRollbackZip(request), temporary);
+            temporary = CreateServerTemporaryPath("KaiZhongRollbackFiles");
+            ZipFile.ExtractToDirectory(ResolveRollbackZip(request), temporary);
             var items = new List<DeploymentStageItem>();
             foreach (var app in GetApplicationSettings(request))
             {
@@ -430,7 +535,7 @@ public sealed class ServerHost : IAsyncDisposable
             return Results.Json(new DeploymentStageResponse { Success = success, Message = success ? "备份集回滚完成。" : "部分应用回滚失败。", Items = items }, statusCode: success ? 200 : 400);
         }
         catch (Exception ex) { return Results.BadRequest(new DeploymentStageResponse { Success = false, Message = ex.Message }); }
-        finally { if (temporary is not null && Directory.Exists(temporary)) Directory.Delete(temporary, true); }
+        finally { TryDeleteTemporaryDirectory(temporary); }
     }
 
     /// <summary>根据所选备份包含的应用启动对应服务。</summary>
@@ -487,7 +592,7 @@ public sealed class ServerHost : IAsyncDisposable
             var zipPath = Path.GetFullPath(Path.Combine(backupDirectory, request.BackupFileName));
             if (!zipPath.StartsWith(Path.TrimEndingDirectorySeparator(backupDirectory) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(zipPath))
                 return Results.BadRequest(CommandResponse.Fail("选择的备份文件不存在或路径无效。"));
-            tempDirectory = Path.Combine(Path.GetTempPath(), $"KaiZhongRollback_{Guid.NewGuid():N}");
+            tempDirectory = CreateServerTemporaryPath("KaiZhongRollback");
             ZipFile.ExtractToDirectory(zipPath, tempDirectory);
             var messages = new List<string>();
             var success = true;
@@ -503,13 +608,13 @@ public sealed class ServerHost : IAsyncDisposable
             return success ? Results.Ok(result) : Results.BadRequest(result);
         }
         catch (Exception ex) { Log($"回滚失败：{ex.Message}"); return Results.BadRequest(CommandResponse.Fail(ex.Message)); }
-        finally { if (tempDirectory is not null && Directory.Exists(tempDirectory)) Directory.Delete(tempDirectory, true); }
+        finally { TryDeleteTemporaryDirectory(tempDirectory); }
     }
 
     private async Task<bool> ApplyApplicationAsync(string appName, string source, string? destination, string? serviceNames, bool updateWpfPackage, List<string> messages, CancellationToken token)
     {
         if (!Directory.Exists(source) || !Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories).Any()) { messages.Add($"{appName} 无待发布文件，已跳过"); return true; }
-        if (string.IsNullOrWhiteSpace(destination)) { messages.Add($"{appName} 有待发布文件但未配置目标目录"); return false; }
+        if (string.IsNullOrWhiteSpace(destination)) { messages.Add($"{appName} 未配置目标目录，已跳过"); return true; }
         var stopResult = await StopServicesAsync(serviceNames, token);
         if (!stopResult.Success)
         {
@@ -741,5 +846,29 @@ public sealed class ServerHost : IAsyncDisposable
     }
 
     /// <summary>程序退出时确保服务已经停止。</summary>
+    /// <summary>生成程序同级 Temp 下的唯一临时文件或目录路径。</summary>
+    private static string CreateServerTemporaryPath(string prefix, string extension = "")
+    {
+        var tempRoot = AppPaths.ServerTempDirectory;
+        Directory.CreateDirectory(tempRoot);
+        return Path.Combine(tempRoot, $"{prefix}_{Guid.NewGuid():N}{extension}");
+    }
+
+    /// <summary>清理临时文件；清理失败不覆盖原始业务执行结果。</summary>
+    private void TryDeleteTemporaryFile(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return;
+        try { File.Delete(path); }
+        catch (Exception ex) { Log($"临时文件清理失败：{path}；{ex.Message}"); }
+    }
+
+    /// <summary>清理临时目录；清理失败不覆盖原始业务执行结果。</summary>
+    private void TryDeleteTemporaryDirectory(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return;
+        try { Directory.Delete(path, recursive: true); }
+        catch (Exception ex) { Log($"临时目录清理失败：{path}；{ex.Message}"); }
+    }
+
     public async ValueTask DisposeAsync() => await StopAsync();
 }

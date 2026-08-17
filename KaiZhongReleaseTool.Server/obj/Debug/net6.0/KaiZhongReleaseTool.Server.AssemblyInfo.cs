@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("KaiZhongReleaseTool.Server")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+254be73b75a9bafbcd08a73f345bc2eb6c2e3b2e")]
 [assembly: System.Reflection.AssemblyProductAttribute("KaiZhongReleaseTool.Server")]
 [assembly: System.Reflection.AssemblyTitleAttribute("KaiZhongReleaseTool.Server")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

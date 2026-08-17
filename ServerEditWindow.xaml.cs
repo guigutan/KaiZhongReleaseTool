@@ -12,6 +12,8 @@ public partial class ServerEditWindow : Window
     {
         InitializeComponent();
         GroupComboBox.ItemsSource = groups.ToArray();
+        ReleaseTierComboBox.ItemsSource = new[] { 1, 2 };
+        ReleaseTierComboBox.SelectedItem = 2;
         if (source is null) return;
         NameTextBox.Text = source.Name;
         GroupComboBox.SelectedItem = source.GroupName;
@@ -19,6 +21,7 @@ public partial class ServerEditWindow : Window
         PortTextBox.Text = source.Port.ToString();
         UsernameTextBox.Text = source.Username;
         RemotePortTextBox.Text = source.RemoteDesktopPort.ToString();
+        ReleaseTierComboBox.SelectedItem = source.ReleaseTier is 1 or 2 ? source.ReleaseTier : 2;
         PasswordTextBox.Text = source.Password;
         ScheduleServerBackupPathTextBox.Text = source.ScheduleServerBackupPath;
         WebApiHostBackupPathTextBox.Text = source.WebApiHostBackupPath;
@@ -30,6 +33,21 @@ public partial class ServerEditWindow : Window
         WebClientServiceNameTextBox.Text = source.WebClientServiceName;
         WpfClientServiceNameTextBox.Text = source.WpfClientServiceName;
         Result = new ServerProfile { Id = source.Id };
+        UpdateCurrentEditingText();
+    }
+
+    /// <summary>服务器名称或 IP 改变时，实时更新窗口顶部的当前编辑提示。</summary>
+    private void EditingIdentity_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e) => UpdateCurrentEditingText();
+
+    /// <summary>按照“当前编辑&gt;&gt; 服务器名称 IP”的格式生成提示，新建时显示占位说明。</summary>
+    private void UpdateCurrentEditingText()
+    {
+        if (CurrentEditingTextBlock is null || NameTextBox is null || HostTextBox is null) return;
+        var name = NameTextBox.Text.Trim();
+        var host = HostTextBox.Text.Trim();
+        CurrentEditingTextBlock.Text = string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(host)
+            ? "当前编辑>> 新增服务器"
+            : $"当前编辑>> {name} {host}".TrimEnd();
     }
 
     /// <summary>校验输入并关闭对话框。</summary>
@@ -58,6 +76,12 @@ public partial class ServerEditWindow : Window
             System.Windows.MessageBox.Show("服务器分组为必填项，请先选择分组。", "输入提示", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
+        if (ReleaseTierComboBox.SelectedItem is not int releaseTier || releaseTier is not (1 or 2))
+        {
+            System.Windows.MessageBox.Show("发布梯队必须选择第1梯队或第2梯队。", "输入提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ReleaseTierComboBox.SelectedItem = 2;
+            return;
+        }
         var hasBackupSource = new[]
         {
             ScheduleServerBackupPathTextBox.Text, WebApiHostBackupPathTextBox.Text,
@@ -75,6 +99,7 @@ public partial class ServerEditWindow : Window
         Result.Port = port;
         Result.Username = UsernameTextBox.Text.Trim();
         Result.RemoteDesktopPort = remotePort;
+        Result.ReleaseTier = releaseTier;
         Result.Password = PasswordTextBox.Text;
         Result.ScheduleServerBackupPath = ScheduleServerBackupPathTextBox.Text.Trim();
         Result.WebApiHostBackupPath = WebApiHostBackupPathTextBox.Text.Trim();
@@ -85,6 +110,7 @@ public partial class ServerEditWindow : Window
         Result.WebApiHostServiceName = WebApiHostServiceNameTextBox.Text.Trim();
         Result.WebClientServiceName = WebClientServiceNameTextBox.Text.Trim();
         Result.WpfClientServiceName = WpfClientServiceNameTextBox.Text.Trim();
+        EditToggleButton.IsChecked = false;
         DialogResult = true;
     }
 

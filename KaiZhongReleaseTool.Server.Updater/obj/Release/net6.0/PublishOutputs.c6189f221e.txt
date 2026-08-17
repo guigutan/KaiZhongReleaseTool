@@ -1,0 +1,5 @@
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Updater\KaiZhongReleaseTool.Server.Updater.exe
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Updater\KaiZhongReleaseTool.Server.Updater.dll
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Updater\KaiZhongReleaseTool.Server.Updater.deps.json
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Updater\KaiZhongReleaseTool.Server.Updater.runtimeconfig.json
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Updater\KaiZhongReleaseTool.Server.Updater.pdb

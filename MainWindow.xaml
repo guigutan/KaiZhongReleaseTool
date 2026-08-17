@@ -49,8 +49,11 @@
                         <MenuItem Header="分组管理" Click="ManageGroups_Click"><MenuItem.Icon><Grid Width="16" Height="16"><Border Background="#8667D6" CornerRadius="8"/><Ellipse Width="4" Height="4" Fill="White" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3,3,0,0"/><Ellipse Width="4" Height="4" Fill="White" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,3,3,0"/><Ellipse Width="4" Height="4" Fill="White" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,3"/></Grid></MenuItem.Icon></MenuItem>
                         <Separator/>
                         <MenuItem Header="发布回滚" Click="RollbackServer_Click"><MenuItem.Icon><Grid Width="16" Height="16"><Ellipse Fill="#E98A50"/><Path Data="M 5,5 L 2.8,7.2 L 5,9.4 M 3.2,7.2 L 9,7.2 A 3.5,3.5 0 0 1 9,14" Stroke="White" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeLineJoin="Round" Fill="Transparent"/></Grid></MenuItem.Icon></MenuItem>
+                        <Separator/>
+                        <MenuItem Header="升级服务端" Click="UpdateServerService_Click"/>
                     </ContextMenu></DataGrid.ContextMenu>
                     <DataGrid.Columns>
+                        <DataGridTextColumn Header="梯队" Binding="{Binding ReleaseTier}" Width="Auto" ElementStyle="{StaticResource ServerStatusTextStyle}"/>
                         <DataGridTextColumn Header="服务器" Binding="{Binding Name}" Width="Auto" ElementStyle="{StaticResource ServerCellTextStyle}"/>
                         <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="Auto" ElementStyle="{StaticResource ServerStatusTextStyle}"/>
                         <DataGridTextColumn Header="服务器IP" Binding="{Binding Host}" Width="Auto" ElementStyle="{StaticResource ServerCellTextStyle}"/>

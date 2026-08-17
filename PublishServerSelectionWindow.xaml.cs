@@ -16,10 +16,30 @@ public partial class PublishServerSelectionWindow : Window
     public PublishServerSelectionWindow(IEnumerable<ServerProfile> servers)
     {
         InitializeComponent();
-        _items = servers.Select(server => new ServerSelectionItem(server, UpdateSelectionCount)).ToList();
+        _items = servers.Select(server => new ServerSelectionItem(server, OnSelectionChanged)).ToList();
         ServerSelectionDataGrid.ItemsSource = _items;
         CreateGroupCheckBoxes();
         UpdateSelectionCount();
+    }
+
+    /// <summary>勾选状态改变后，同时刷新数量和当前显示过滤结果。</summary>
+    private void OnSelectionChanged()
+    {
+        UpdateSelectionCount();
+        Dispatcher.BeginInvoke(new Action(() => ServerSelectionDataGrid?.Items.Refresh()));
+    }
+
+    /// <summary>三个显示复选框按单选方式工作，并过滤服务器行但不改变勾选状态。</summary>
+    private void DisplayFilterCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.CheckBox selected) return;
+        ShowAllCheckBox.IsChecked = selected == ShowAllCheckBox;
+        ShowSelectedCheckBox.IsChecked = selected == ShowSelectedCheckBox;
+        ShowUnselectedCheckBox.IsChecked = selected == ShowUnselectedCheckBox;
+        var view = System.Windows.Data.CollectionViewSource.GetDefaultView(_items);
+        view.Filter = item => item is ServerSelectionItem option &&
+            (ShowAllCheckBox.IsChecked == true || ShowSelectedCheckBox.IsChecked == true && option.IsSelected || ShowUnselectedCheckBox.IsChecked == true && !option.IsSelected);
+        view.Refresh();
     }
 
     /// <summary>根据当前服务器分组动态创建支持自动换行的分组复选框。</summary>

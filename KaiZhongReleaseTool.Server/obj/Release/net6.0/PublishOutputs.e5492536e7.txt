@@ -1,0 +1,11 @@
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Files\KaiZhongReleaseTool.Server.exe
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Files\KaiZhongReleaseTool.Server.dll
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Files\KaiZhongReleaseTool.Server.deps.json
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Files\KaiZhongReleaseTool.Server.runtimeconfig.json
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Files\KaiZhongReleaseTool.Server.pdb
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Files\Microsoft.Extensions.Configuration.EnvironmentVariables.dll
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Files\Microsoft.Extensions.Configuration.UserSecrets.dll
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Files\Microsoft.Extensions.Hosting.dll
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Files\Microsoft.Extensions.Hosting.WindowsServices.dll
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Files\System.ServiceProcess.ServiceController.dll
+D:\myproject\KaiZhongReleaseTool\artifacts\Server\Files\runtimes\win\lib\net6.0\System.ServiceProcess.ServiceController.dll

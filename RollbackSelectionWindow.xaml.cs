@@ -17,9 +17,22 @@ public partial class RollbackSelectionWindow : Window
     public RollbackSelectionWindow(IEnumerable<ServerProfile> servers, Func<ServerProfile, Task<(bool Success, string Message, string[] Files)>> loadBackups)
     {
         InitializeComponent(); _loadBackups = loadBackups;
-        foreach (var server in servers) { var option = new RollbackServerOption(server); option.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(RollbackServerOption.IsSelected)) UpdateSelectionCount(); }; Options.Add(option); }
+        foreach (var server in servers) { var option = new RollbackServerOption(server); option.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(RollbackServerOption.IsSelected)) { UpdateSelectionCount(); Dispatcher.BeginInvoke(new Action(() => ServerDataGrid?.Items.Refresh())); } }; Options.Add(option); }
         ServerDataGrid.ItemsSource = Options; Loaded += async (_, _) => await LoadAllAsync();
         CreateGroupCheckBoxes(); UpdateSelectionCount();
+    }
+
+    /// <summary>过滤显示全部、已勾选或未勾选服务器，不影响各行原有选择状态。</summary>
+    private void DisplayFilterCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.CheckBox selected) return;
+        ShowAllCheckBox.IsChecked = selected == ShowAllCheckBox;
+        ShowSelectedCheckBox.IsChecked = selected == ShowSelectedCheckBox;
+        ShowUnselectedCheckBox.IsChecked = selected == ShowUnselectedCheckBox;
+        var view = System.Windows.Data.CollectionViewSource.GetDefaultView(Options);
+        view.Filter = item => item is RollbackServerOption option &&
+            (ShowAllCheckBox.IsChecked == true || ShowSelectedCheckBox.IsChecked == true && option.IsSelected || ShowUnselectedCheckBox.IsChecked == true && !option.IsSelected);
+        view.Refresh();
     }
 
     private async Task LoadAllAsync()

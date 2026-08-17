@@ -1,0 +1,15 @@
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\obj\Release\net6.0\KaiZhongReleaseTool.Server.Updater.GeneratedMSBuildEditorConfig.editorconfig
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\obj\Release\net6.0\KaiZhongReleaseTool.Server.Updater.AssemblyInfoInputs.cache
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\obj\Release\net6.0\KaiZhongReleaseTool.Server.Updater.AssemblyInfo.cs
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\obj\Release\net6.0\KaiZhongReleaseTool.Server.Updater.csproj.CoreCompileInputs.cache
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\obj\Release\net6.0\KaiZhongReleaseTool.Server.Updater.sourcelink.json
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\obj\Release\net6.0\KaiZhongReleaseTool.Server.Updater.genruntimeconfig.cache
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\bin\Release\net6.0\KaiZhongReleaseTool.Server.Updater.exe
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\bin\Release\net6.0\KaiZhongReleaseTool.Server.Updater.deps.json
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\bin\Release\net6.0\KaiZhongReleaseTool.Server.Updater.runtimeconfig.json
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\bin\Release\net6.0\KaiZhongReleaseTool.Server.Updater.dll
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\bin\Release\net6.0\KaiZhongReleaseTool.Server.Updater.pdb
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\obj\Release\net6.0\KaiZhongReleaseTool.Server.Updater.dll
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\obj\Release\net6.0\refint\KaiZhongReleaseTool.Server.Updater.dll
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\obj\Release\net6.0\KaiZhongReleaseTool.Server.Updater.pdb
+D:\myproject\KaiZhongReleaseTool\KaiZhongReleaseTool.Server.Updater\obj\Release\net6.0\ref\KaiZhongReleaseTool.Server.Updater.dll

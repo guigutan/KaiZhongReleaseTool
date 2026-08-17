@@ -1,8 +1,8 @@
 <Window x:Class="KaiZhongReleaseTool.PublishServerSelectionWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="选择发布服务器" Icon="imges/logo64.ico" Height="660" Width="920" MinHeight="560" MinWidth="760" WindowStartupLocation="CenterOwner">
     <Grid Margin="28">
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <Canvas Grid.RowSpan="4" IsHitTestVisible="False" ClipToBounds="True" Margin="-28">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Canvas Grid.RowSpan="5" IsHitTestVisible="False" ClipToBounds="True" Margin="-28">
             <Ellipse Width="430" Height="430" Canvas.Left="-170" Canvas.Top="-210" Opacity="0.20"><Ellipse.Fill><RadialGradientBrush><GradientStop Color="#66B9FF"/><GradientStop Color="#0066B9FF" Offset="1"/></RadialGradientBrush></Ellipse.Fill></Ellipse>
             <Ellipse Width="500" Height="500" Canvas.Left="650" Canvas.Top="310" Opacity="0.18"><Ellipse.Fill><RadialGradientBrush><GradientStop Color="#6DE6AC"/><GradientStop Color="#006DE6AC" Offset="1"/></RadialGradientBrush></Ellipse.Fill></Ellipse>
         </Canvas>
@@ -13,7 +13,9 @@
             <Border Grid.Column="2" Background="#E5FAEE" CornerRadius="16" Padding="14,7" VerticalAlignment="Center"><TextBlock Text="●  发布准备" Foreground="#168752" FontWeight="SemiBold"/></Border>
         </Grid>
 
-        <Border Grid.Row="1" Background="#EFFFFFFF" BorderBrush="#C8E5F3" BorderThickness="1" CornerRadius="15" Padding="16,12" Margin="0,0,0,14" Effect="{StaticResource CardShadow}">
+        <Border Grid.Row="1" Background="#F4FAFF" BorderBrush="#C8E5F3" BorderThickness="1" CornerRadius="15" Padding="16,9" Margin="0,0,0,10"><WrapPanel><TextBlock Text="显示：" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0"/><CheckBox x:Name="ShowAllCheckBox" Content="全部显示" IsChecked="True" Margin="0,2,18,2" Padding="5" Click="DisplayFilterCheckBox_Click"/><CheckBox x:Name="ShowSelectedCheckBox" Content="仅显示勾选" Margin="0,2,18,2" Padding="5" Click="DisplayFilterCheckBox_Click"/><CheckBox x:Name="ShowUnselectedCheckBox" Content="仅显示未勾选" Margin="0,2,18,2" Padding="5" Click="DisplayFilterCheckBox_Click"/></WrapPanel></Border>
+
+        <Border Grid.Row="2" Background="#EFFFFFFF" BorderBrush="#C8E5F3" BorderThickness="1" CornerRadius="15" Padding="16,12" Margin="0,0,0,14" Effect="{StaticResource CardShadow}">
             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <WrapPanel x:Name="GroupCheckBoxPanel" VerticalAlignment="Center">
                     <CheckBox x:Name="SelectAllCheckBox" Content="全选" IsThreeState="True" FontWeight="Bold" FontSize="14" Padding="7,5" Margin="0,2,12,2" Cursor="Hand" Click="SelectAllCheckBox_Click"/>
@@ -22,7 +24,7 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="2" Background="#F5FFFFFF" BorderBrush="#C8E5F3" BorderThickness="1" CornerRadius="17" Padding="5" Effect="{StaticResource CardShadow}">
+        <Border Grid.Row="3" Background="#F5FFFFFF" BorderBrush="#C8E5F3" BorderThickness="1" CornerRadius="17" Padding="5" Effect="{StaticResource CardShadow}">
             <DataGrid x:Name="ServerSelectionDataGrid" AutoGenerateColumns="False" CanUserAddRows="False" HeadersVisibility="Column" RowHeight="37" ColumnHeaderHeight="43" SelectionMode="Extended" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#DFEBF2" BorderThickness="0" Background="Transparent">
                 <DataGrid.Resources>
                     <Style x:Key="LargeServerCheckBoxStyle" TargetType="CheckBox"><Setter Property="HorizontalAlignment" Value="Center"/><Setter Property="VerticalAlignment" Value="Center"/><Setter Property="Cursor" Value="Hand"/><Setter Property="LayoutTransform"><Setter.Value><ScaleTransform ScaleX="1.4" ScaleY="1.4"/></Setter.Value></Setter></Style>
@@ -46,7 +48,7 @@
             </DataGrid>
         </Border>
 
-        <Grid Grid.Row="3" Margin="2,18,2,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <Grid Grid.Row="4" Margin="2,18,2,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Ellipse Width="8" Height="8" Fill="#1BAA72" Margin="0,0,8,0"/><TextBlock Text="确认后将进入下一步发布流程" Foreground="{StaticResource MutedBrush}"/></StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal"><Button Content="取消" Width="100" Background="#94A3B8" Margin="0,0,12,0" Click="Cancel_Click"/><Button Content="确认选择  →" Width="130" Click="Confirm_Click"/></StackPanel>
         </Grid>

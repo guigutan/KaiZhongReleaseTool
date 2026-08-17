@@ -9,9 +9,11 @@ public sealed class LogRepository
     private readonly string _connectionString;
     private readonly object _syncRoot = new();
 
-    public LogRepository()
+    public LogRepository(string? databasePath = null)
     {
-        var path = Path.Combine(AppContext.BaseDirectory, "log.db");
+        var path = databasePath ?? Path.Combine(AppContext.BaseDirectory, "log.db");
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
         _connectionString = new SqliteConnectionStringBuilder { DataSource = path }.ToString();
         Initialize();
     }

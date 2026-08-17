@@ -1,0 +1,23 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v6.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v6.0": {
+      "KaiZhongReleaseTool.Server.Updater/1.0.0": {
+        "runtime": {
+          "KaiZhongReleaseTool.Server.Updater.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "KaiZhongReleaseTool.Server.Updater/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

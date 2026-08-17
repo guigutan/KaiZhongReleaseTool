@@ -106,6 +106,14 @@ public sealed class DeploymentStageItem
     public bool HasFiles { get; set; }
     public bool HasBackupPath { get; set; }
     public bool HasServices { get; set; }
+    /// <summary>是否填写了备份路径。</summary>
+    public bool BackupPathConfigured { get; set; }
+    /// <summary>已填写的备份路径是否在服务端真实存在。</summary>
+    public bool BackupPathExists { get; set; }
+    /// <summary>是否填写了一个或多个 Windows 服务名。</summary>
+    public bool ServicesConfigured { get; set; }
+    /// <summary>填写的所有 Windows 服务是否都在服务端真实存在。</summary>
+    public bool ServicesExist { get; set; }
     public bool Success { get; set; }
     public int Attempts { get; set; }
     public string Message { get; set; } = string.Empty;

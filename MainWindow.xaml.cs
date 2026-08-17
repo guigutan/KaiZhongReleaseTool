@@ -10,6 +10,7 @@ using Microsoft.Data.Sqlite;
 using System.Diagnostics;
 using System.Windows.Media;
 using System.Windows.Documents;
+using System.Security.Cryptography;
 using Brushes = System.Windows.Media.Brushes;
 
 namespace KaiZhongReleaseTool;
@@ -559,53 +560,89 @@ public partial class MainWindow : Window
             _currentLogSetName = "Push" + backupTimestamp;
             _logRepository.CreateSet(_currentLogSetName, "Push", backupTimestamp + ".zip");
             AppendPublishLine($"当前发布日志：{_currentLogSetName}", Brushes.SteelBlue, true);
-            AppendPublishHeader("第1步：上传文件到服务器");
+            AppendPublishStepHeader("第1步：上传文件到服务器");
             await Task.Run(() => ZipFile.CreateFromDirectory(dllRoot, tempZip, CompressionLevel.Optimal, includeBaseDirectory: false));
-            var uploads = await RunServerStageAsync(dialog.SelectedServers, server => UploadSmomDllAsync(server, tempZip), result => $"【{result.Server.Name}】文件上传{(result.Success ? "✔" : "×（已尝试5次）")}。", result => result.Success ? Brushes.SeaGreen : Brushes.Crimson);
+            var uploadFileCount = dllFiles.Length;
+            var uploads = await RunServerStageAsync(dialog.SelectedServers, server => UploadSmomDllAsync(server, tempZip, uploadFileCount), result => result.Success ? $"【{result.Server.Name}】文件上传 ✔ {result.FileCount}个" : $"【{result.Server.Name}】文件上传 ×（已尝试5次）", result => result.Success ? Brushes.SeaGreen : Brushes.Crimson);
             if (uploads.Any(item => !item.Success)) { AppendPublishAbort("存在文件上传失败的服务器，已终止发布。"); return; }
 
-            AppendPublishHeader("第2步：检查服务器配置");
+            AppendPublishStepHeader("第2步：检查服务器配置");
             var checks = await RunDeploymentStageAsync(dialog.SelectedServers, "api/deploy/check", serverResult =>
             {
                 foreach (var item in serverResult.Response?.Items ?? new())
                 {
-                    var text = $"【{serverResult.Server.Name}】{item.ApplicationName}[文件{(item.HasFiles ? "✔" : "×")}，备份路径{(item.HasBackupPath ? "✔" : "×")}，服务{(item.HasServices ? "✔" : "×")}]";
-                    var color = item.HasFiles && !item.HasBackupPath ? Brushes.Crimson : item.HasFiles && !item.HasServices ? Brushes.DarkGoldenrod : Brushes.SeaGreen;
-                    AppendPublishLine(text, color);
+                    var fileMark = item.HasFiles ? "✔" : "○";
+                    var backupMark = item.BackupPathConfigured ? item.BackupPathExists ? "✔" : "×" : "○";
+                    var serviceMark = item.ServicesConfigured ? item.ServicesExist ? "✔" : "×" : "○";
+                    var text = $"【{serverResult.Server.Name}】{item.ApplicationName}[文件{fileMark}，备份路径{backupMark}，服务{serviceMark}]";
+                    AppendPublishLine(text, item.Success ? Brushes.SeaGreen : Brushes.Crimson);
                 }
                 AppendPublishLine(string.Empty, Brushes.Black);
             });
-            if (checks.Any(result => result.Response is null || !result.Response.Success)) { AppendPublishAbort("存在有文件但未配置备份路径的应用，已终止发布。"); return; }
+            WriteConfigurationFailureReasons(checks);
+            if (checks.Any(result => result.Response is null || !result.Response.Success)) { AppendPublishAbort("存在不满足发布条件的服务器配置，已终止发布。"); return; }
 
-            AppendPublishHeader("第3步：备份文件");
+            AppendPublishStepHeader("第3步：备份文件");
             var backups = await RunServerStageAsync(dialog.SelectedServers, server => BackupServerAsync(server, backupTimestamp), result => $"【{result.Server.Name}】{backupTimestamp}.zip 备份{(result.Success ? "✔" : "×")}", result => result.Success ? Brushes.SeaGreen : Brushes.Crimson);
             if (backups.Any(item => !item.Success)) { AppendPublishAbort("存在备份失败的服务器，已终止发布。"); return; }
 
-            AppendPublishHeader("第4步：停止服务");
-            var stops = await RunDeploymentStageAsync(dialog.SelectedServers, "api/deploy/stop", result => WriteServiceStage(new[] { result }, "停止"));
-            if (stops.Any(result => result.Response is null || !result.Response.Success))
-            {
-                AppendPublishAbort("存在服务停止失败的服务器，不执行应用发布；正在恢复已停止的服务。");
-                await RunDeploymentStageAsync(dialog.SelectedServers, "api/deploy/start", result => WriteServiceStage(new[] { result }, "恢复启动"));
-                return;
-            }
-
-            AppendPublishHeader("第5步：发布应用程序");
-            var publishes = await RunDeploymentStageAsync(dialog.SelectedServers, "api/deploy/publish", result =>
+            AppendPublishStepHeader("第4步：发布应用程序");
+            void WritePublishResult(ServerStageResult result)
             {
                 foreach (var item in result.Response?.Items ?? new())
                     AppendPublishLine($"【{result.Server.Name}】{item.ApplicationName} 发布{(item.Success ? "✔" : $"×（已尝试{item.Attempts}次）")}{(item.ApplicationName == "WpfClient" && item.Success ? $" 版本修改✔ 当前版本{item.Version}" : string.Empty)}", item.Success ? Brushes.SeaGreen : Brushes.Crimson);
-            });
+            }
 
-            AppendPublishHeader("第6步：启动服务");
-            var starts = await RunDeploymentStageAsync(dialog.SelectedServers, "api/deploy/start", result => WriteServiceStage(new[] { result }, "启动"));
+            var publishes = new List<ServerStageResult>();
+            var starts = new List<ServerStageResult>();
+
+            async Task<(bool StopSucceeded, bool AllSucceeded)> PublishTierAsync(IEnumerable<ServerProfile> servers)
+            {
+                var tierServers = servers.ToArray();
+                var tierStops = await RunDeploymentStageAsync(tierServers, "api/deploy/stop", result => WriteServiceStage(new[] { result }, "停止"));
+                if (tierStops.Any(result => result.Response is null || !result.Response.Success))
+                {
+                    AppendPublishAbort("本梯队存在服务停止失败的服务器，不执行文件覆盖；正在恢复已经停止的服务。");
+                    var recoveryStarts = await RunDeploymentStageAsync(tierServers, "api/deploy/start", result => WriteServiceStage(new[] { result }, "恢复启动"));
+                    starts.AddRange(recoveryStarts);
+                    return (false, false);
+                }
+
+                // 文件覆盖无论成功或失败，都必须继续启动本梯队服务。
+                var tierPublishes = await RunDeploymentStageAsync(tierServers, "api/deploy/publish", WritePublishResult);
+                publishes.AddRange(tierPublishes);
+                var tierStarts = await RunDeploymentStageAsync(tierServers, "api/deploy/start", result => WriteServiceStage(new[] { result }, "启动"));
+                starts.AddRange(tierStarts);
+                var allSucceeded = tierPublishes.All(result => result.Response?.Success == true)
+                    && tierStarts.All(result => result.Response?.Success == true);
+                return (true, allSucceeded);
+            }
+
+            AppendPublishLine("即将发布第1梯队的服务器。", Brushes.SteelBlue, true);
+            var tierOneResult = await PublishTierAsync(dialog.SelectedServers.Where(server => server.ReleaseTier == 1));
+            if (!tierOneResult.AllSucceeded)
+            {
+                foreach (var failed in starts.SelectMany(result => (result.Response?.Items ?? new List<DeploymentStageItem>())
+                    .Where(item => !item.Success)
+                    .Select(item => (result.Server.Name, Item: item))))
+                    AppendPublishLine($"【{failed.Name}】服务：{failed.Item.ApplicationName}${failed.Item.ServiceName} 启动失败，请尽快处理。", Brushes.Crimson, true, failed.Name);
+                AppendPublishLine("第1梯队存在执行失败的服务器，已阻断第2梯队发布。", Brushes.Crimson, true);
+                return;
+            }
+
+            AppendPublishLine("第1梯队已发布完成，即将发布第2梯队的服务器。", Brushes.SteelBlue, true);
+            var tierTwoResult = await PublishTierAsync(dialog.SelectedServers.Where(server => server.ReleaseTier != 1));
+            if (!tierTwoResult.StopSucceeded) return;
+
             var allSucceeded = starts.All(item => item.Response?.Success == true) && publishes.All(item => item.Response?.Success == true);
-            AppendPublishLine(allSucceeded ? "发布流程执行完成。" : "发布流程执行完成，但存在失败项，请查看红色日志。", allSucceeded ? Brushes.SeaGreen : Brushes.Crimson, true);
+            var completedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            AppendPublishLine(allSucceeded ? $"发布流程执行完成 {completedAt}" : $"发布流程执行完成，但存在失败项，请查看红色日志。 {completedAt}", allSucceeded ? Brushes.SeaGreen : Brushes.Crimson, true);
             var failedServices = starts.SelectMany(result => (result.Response?.Items ?? new List<DeploymentStageItem>())
                 .Where(item => !item.Success)
                 .Select(item => (result.Server.Name, Item: item))).ToArray();
             foreach (var failed in failedServices)
                 AppendPublishLine($"【{failed.Name}】服务：{failed.Item.ApplicationName}${failed.Item.ServiceName} 启动失败，请尽快处理。", Brushes.Crimson, true, failed.Name);
+            SavePublishedFileListToDatabase(dllRoot);
         }
         catch (Exception ex)
         {
@@ -620,7 +657,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>向一台服务器上传 SMOMDLL 压缩包，并返回该服务器的独立执行结果。</summary>
-    private async Task<SmomDllPublishResult> UploadSmomDllAsync(ServerProfile server, string zipPath)
+    private async Task<SmomDllPublishResult> UploadSmomDllAsync(ServerProfile server, string zipPath, int fileCount = 0)
     {
         string lastMessage = string.Empty;
         for (var attempt = 1; attempt <= 5; attempt++)
@@ -638,7 +675,7 @@ public partial class MainWindow : Window
                 var commandResult = parsed.Result;
                 lastMessage = parsed.Message;
                 if (response.IsSuccessStatusCode && commandResult?.Success == true)
-                    return new SmomDllPublishResult(server, true, $"{lastMessage}（第 {attempt} 次成功）");
+                    return new SmomDllPublishResult(server, true, $"{lastMessage}（第 {attempt} 次成功）", fileCount);
             }
             catch (Exception ex) { lastMessage = ex.Message; }
             if (attempt < 5) await Task.Delay(TimeSpan.FromSeconds(3));
@@ -706,7 +743,73 @@ public partial class MainWindow : Window
     }
 
     private void AppendPublishHeader(string text) => AppendPublishLine(text, Brushes.SteelBlue, true);
+    /// <summary>发布步骤开始时追加该步骤自己的当前时间。</summary>
+    private void AppendPublishStepHeader(string text) => AppendPublishHeader($"{text} {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
     private void AppendPublishAbort(string text) => AppendPublishLine(text, Brushes.Crimson, true);
+
+    /// <summary>在配置检查结果末尾，按服务器和应用集中显示所有红色失败原因。</summary>
+    private void WriteConfigurationFailureReasons(IEnumerable<ServerStageResult> checks)
+    {
+        var failedResults = checks.Where(result => result.Response is null || !result.Response.Success).ToArray();
+        if (failedResults.Length == 0) return;
+
+        AppendPublishLine("配置检查失败原因：", Brushes.Crimson, true);
+        foreach (var serverResult in failedResults)
+        {
+            if (serverResult.Response is null)
+            {
+                AppendPublishLine($"【{serverResult.Server.Name}】>>原因：无法取得服务器配置检查结果：{serverResult.Message}", Brushes.Crimson, true, serverResult.Server.Name);
+                AppendPublishLine(string.Empty, Brushes.Crimson);
+                continue;
+            }
+
+            foreach (var item in serverResult.Response.Items.Where(item => !item.Success))
+            {
+                var fileMark = item.HasFiles ? "✔" : "○";
+                var backupMark = item.BackupPathConfigured ? item.BackupPathExists ? "✔" : "×" : "○";
+                var serviceMark = item.ServicesConfigured ? item.ServicesExist ? "✔" : "×" : "○";
+                var reasons = GetConfigurationFailureReasons(item);
+                if (reasons.Count == 0) reasons.Add("服务器配置不满足发布条件。");
+                AppendPublishLine($"【{serverResult.Server.Name}】{item.ApplicationName}[文件{fileMark}，备份路径{backupMark}，服务{serviceMark}] >>原因：{reasons[0]}", Brushes.Crimson, true, serverResult.Server.Name);
+                foreach (var reason in reasons.Skip(1))
+                    AppendPublishLine($"    原因：{reason}", Brushes.Crimson, true, serverResult.Server.Name);
+            }
+            // 不同服务器的原因之间留一行，便于批量发布时识别。
+            AppendPublishLine(string.Empty, Brushes.Crimson);
+        }
+    }
+
+    /// <summary>根据服务端返回的检查状态生成一项或多项明确原因。</summary>
+    private static List<string> GetConfigurationFailureReasons(DeploymentStageItem item)
+    {
+        var reasons = new List<string>();
+        if (item.BackupPathConfigured && !item.BackupPathExists)
+            reasons.Add("配置了备份路径，但该路径在服务端不存在。");
+        if (item.ServicesConfigured && !item.ServicesExist)
+            reasons.Add("配置了服务名，但其中至少一个服务在服务端不存在。");
+        if (!string.Equals(item.ApplicationName, "WpfClient", StringComparison.OrdinalIgnoreCase)
+            && item.BackupPathConfigured && !item.ServicesConfigured)
+            reasons.Add("配置了备份路径，但没有配置对应服务名。");
+        return reasons;
+    }
+
+    /// <summary>把本次发布的 DLL 清单仅写入数据库，不追加到当前执行结果界面。</summary>
+    private void SavePublishedFileListToDatabase(string dllRoot)
+    {
+        if (string.IsNullOrWhiteSpace(_currentLogSetName)) return;
+        _logRepository.Append(_currentLogSetName, "本次发布的文件", "Header");
+        foreach (var applicationName in DllProjectNames)
+        {
+            _logRepository.Append(_currentLogSetName, $"【{applicationName}】", "Header");
+            var applicationDirectory = Path.Combine(dllRoot, applicationName);
+            if (Directory.Exists(applicationDirectory))
+            {
+                foreach (var file in Directory.EnumerateFiles(applicationDirectory, "*.dll", SearchOption.AllDirectories).OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+                    _logRepository.Append(_currentLogSetName, $"\t{Path.GetFileName(file)}", "Success");
+            }
+            _logRepository.Append(_currentLogSetName, string.Empty, "Success");
+        }
+    }
 
     /// <summary>向发布日志追加一行带颜色的文字，并立即滚动到最新结果。</summary>
     private void AppendPublishLine(string text, System.Windows.Media.Brush color, bool bold = false, string serverName = "")
@@ -799,7 +902,10 @@ public partial class MainWindow : Window
             var backupSummary = string.Join("，", dialog.SelectedOptions.Select(item => $"{item.Server.Name}:{item.SelectedBackupFile}"));
             _logRepository.CreateSet(_currentLogSetName, "RollBack", backupSummary);
             ResultTextBox.Visibility = Visibility.Collapsed; PublishLogRichTextBox.Visibility = Visibility.Visible; PublishLogRichTextBox.Document.Blocks.Clear();
-            AppendPublishLine($"当前回滚日志：{_currentLogSetName}>>>回滚备份集：{backupSummary}", Brushes.SteelBlue, true);
+            AppendPublishLine($"当前回滚日志：{_currentLogSetName}", Brushes.SteelBlue, true);
+            AppendPublishLine("回滚备份集：", Brushes.SteelBlue, true);
+            foreach (var option in dialog.SelectedOptions)
+                AppendPublishLine($"{option.Server.Name}:{option.SelectedBackupFile}", Brushes.SteelBlue);
 
             AppendPublishHeader("第1步：停止服务");
             var stops = await RunRollbackStageAsync(dialog.SelectedOptions, "api/deploy/rollback-stop", result => WriteServiceStage(new[] { result }, "停止"));
@@ -828,6 +934,77 @@ public partial class MainWindow : Window
                 AppendPublishLine($"【{failed.Name}】服务：{failed.Item.ApplicationName}${failed.Item.ServiceName} 启动失败，请尽快处理。", Brushes.Crimson, true, failed.Name);
         }
         catch (Exception ex) { AppendPublishLine($"发布回滚失败：{ex.Message}", Brushes.Crimson, true); }
+    }
+
+    /// <summary>选择服务升级包和多台服务器，并发触发无界面 Windows 服务自动更新。</summary>
+    private async void UpdateServerService_Click(object sender, RoutedEventArgs e)
+    {
+        var fileDialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "选择服务端自动升级包",
+            Filter = "服务端升级包 (*.zip)|*.zip"
+        };
+        if (fileDialog.ShowDialog(this) != true) return;
+
+        var selection = new PublishServerSelectionWindow(_allServers)
+        {
+            Owner = this,
+            Title = "选择需要升级的服务器"
+        };
+        if (selection.ShowDialog() != true || selection.SelectedServers.Count == 0) return;
+
+        byte[] hash;
+        await using (var packageStream = File.OpenRead(fileDialog.FileName))
+        {
+            using var sha256 = SHA256.Create();
+            hash = await sha256.ComputeHashAsync(packageStream);
+        }
+        var hashText = Convert.ToHexString(hash);
+
+        ResultTextBox.Visibility = Visibility.Visible;
+        PublishLogRichTextBox.Visibility = Visibility.Collapsed;
+        ResultTextBox.Clear();
+        ResultTextBox.AppendText("批量升级 Windows 服务\r\n\r\n");
+
+        async Task<(ServerProfile Server, bool Success, string Message)> UpdateOneAsync(ServerProfile server)
+        {
+            try
+            {
+                await using var stream = File.OpenRead(fileDialog.FileName);
+                using var form = new MultipartFormDataContent();
+                form.Add(new StreamContent(stream), "updatePackage", Path.GetFileName(fileDialog.FileName));
+                form.Add(new StringContent(hashText), "sha256");
+                using var request = new HttpRequestMessage(HttpMethod.Post, server.BaseUrl + "api/system/update") { Content = form };
+                using var response = await _httpClient.SendAsync(request);
+                var responseText = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode) return (server, false, responseText);
+
+                // 服务退出、覆盖并重新启动需要时间；轮询健康接口确认恢复在线。
+                await Task.Delay(3000);
+                for (var attempt = 1; attempt <= 30; attempt++)
+                {
+                    try
+                    {
+                        using var health = await _statusHttpClient.GetAsync(server.BaseUrl);
+                        if (health.IsSuccessStatusCode) return (server, true, "升级完成并已重新在线");
+                    }
+                    catch { }
+                    await Task.Delay(3000);
+                }
+                return (server, false, "升级包已接收，但90秒内未重新上线");
+            }
+            catch (Exception ex) { return (server, false, ex.Message); }
+        }
+
+        var pending = selection.SelectedServers.Select(UpdateOneAsync).ToList();
+        while (pending.Count > 0)
+        {
+            var completed = await Task.WhenAny(pending);
+            pending.Remove(completed);
+            var result = await completed;
+            ResultTextBox.AppendText($"【{result.Server.Name}】{(result.Success ? "升级✔" : "升级×")} {result.Message}\r\n");
+            ResultTextBox.ScrollToEnd();
+        }
     }
 
     /// <summary>多台服务器按各自选择的备份版本并发执行回滚阶段，并按完成顺序实时显示。</summary>
@@ -883,7 +1060,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>一台服务器的 SMOMDLL 同步结果。</summary>
-    private sealed record SmomDllPublishResult(ServerProfile Server, bool Success, string Message);
+    private sealed record SmomDllPublishResult(ServerProfile Server, bool Success, string Message, int FileCount = 0);
 
     /// <summary>根据所选模式收集 DLL，并复制到程序目录下对应的 SMOMDLL 子目录。</summary>
     private async void GetDllButton_Click(object sender, RoutedEventArgs e)

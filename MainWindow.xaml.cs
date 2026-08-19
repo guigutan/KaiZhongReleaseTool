@@ -517,7 +517,7 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    /// <summary>校验本地 DLL、选择服务器，并把完整 SMOMDLL 并发同步到所有目标服务器。</summary>
+    /// <summary>校验本地 DLL、选择服务器，并按每台服务器已配置的应用路径上传对应文件。</summary>
     private async void PublishToServerButton_Click(object sender, RoutedEventArgs e)
     {
         var dllRoot = Path.Combine(AppContext.BaseDirectory, "SMOMDLL");
@@ -548,7 +548,7 @@ public partial class MainWindow : Window
         var dialog = new PublishServerSelectionWindow(_allServers) { Owner = this };
         if (dialog.ShowDialog() != true) return;
 
-        var tempZip = Path.Combine(Path.GetTempPath(), $"KaiZhongPublish_{Guid.NewGuid():N}.zip");
+        var temporaryZipPaths = new List<string>();
         PublishToServerButton.IsEnabled = false;
         GetDllButton.IsEnabled = false;
         ResultTextBox.Visibility = Visibility.Collapsed;
@@ -561,9 +561,14 @@ public partial class MainWindow : Window
             _logRepository.CreateSet(_currentLogSetName, "Push", backupTimestamp + ".zip");
             AppendPublishLine($"当前发布日志：{_currentLogSetName}", Brushes.SteelBlue, true);
             AppendPublishStepHeader("第1步：上传文件到服务器");
-            await Task.Run(() => ZipFile.CreateFromDirectory(dllRoot, tempZip, CompressionLevel.Optimal, includeBaseDirectory: false));
-            var uploadFileCount = dllFiles.Length;
-            var uploads = await RunServerStageAsync(dialog.SelectedServers, server => UploadSmomDllAsync(server, tempZip, uploadFileCount), result => result.Success ? $"【{result.Server.Name}】文件上传 ✔ {result.FileCount}个" : $"【{result.Server.Name}】文件上传 ×（已尝试5次）", result => result.Success ? Brushes.SeaGreen : Brushes.Crimson);
+            var uploadPackages = await Task.Run(() => CreateServerUploadPackages(dialog.SelectedServers, dllRoot, temporaryZipPaths));
+            var uploads = await RunServerStageAsync(dialog.SelectedServers, server =>
+            {
+                var package = uploadPackages[server.Id];
+                return package is null
+                    ? Task.FromResult(new SmomDllPublishResult(server, true, "未配置任何应用路径，已跳过上传。", 0, true))
+                    : UploadSmomDllAsync(server, package.Value.ZipPath, package.Value.FileCount);
+            }, result => result.Skipped ? $"【{result.Server.Name}】未配置应用路径，已跳过上传" : result.Success ? $"【{result.Server.Name}】文件上传 ✔ {result.FileCount}个" : $"【{result.Server.Name}】文件上传 ×（已尝试5次）", result => result.Success ? Brushes.SeaGreen : Brushes.Crimson);
             if (uploads.Any(item => !item.Success)) { AppendPublishAbort("存在文件上传失败的服务器，已终止发布。"); return; }
 
             AppendPublishStepHeader("第2步：检查服务器配置");
@@ -652,8 +657,73 @@ public partial class MainWindow : Window
         {
             PublishToServerButton.IsEnabled = true;
             GetDllButton.IsEnabled = true;
-            if (File.Exists(tempZip)) File.Delete(tempZip);
+            foreach (var zipPath in temporaryZipPaths)
+                if (File.Exists(zipPath)) File.Delete(zipPath);
         }
+    }
+
+    /// <summary>
+    /// 按服务器已填写的四个应用路径生成上传包；相同应用组合复用同一个 ZIP，减少重复压缩。
+    /// 没有配置任何应用路径的服务器返回 null，发布流程会直接跳过上传。
+    /// </summary>
+    private static Dictionary<long, (string ZipPath, int FileCount)?> CreateServerUploadPackages(
+        IEnumerable<ServerProfile> servers, string dllRoot, ICollection<string> temporaryZipPaths)
+    {
+        var packageCache = new Dictionary<int, (string ZipPath, int FileCount)>();
+        var result = new Dictionary<long, (string ZipPath, int FileCount)?>();
+        foreach (var server in servers)
+        {
+            var applicationMask = GetConfiguredApplicationMask(server);
+            if (applicationMask == 0)
+            {
+                result[server.Id] = null;
+                continue;
+            }
+
+            if (!packageCache.TryGetValue(applicationMask, out var package))
+            {
+                var zipPath = Path.Combine(Path.GetTempPath(), $"KaiZhongPublish_{applicationMask}_{Guid.NewGuid():N}.zip");
+                temporaryZipPaths.Add(zipPath);
+                var fileCount = CreateApplicationArchive(dllRoot, zipPath, applicationMask);
+                package = (zipPath, fileCount);
+                packageCache[applicationMask] = package;
+            }
+            result[server.Id] = package;
+        }
+        return result;
+    }
+
+    /// <summary>把服务器已配置路径的应用转换成四位掩码，便于复用相同内容的压缩包。</summary>
+    private static int GetConfiguredApplicationMask(ServerProfile server)
+    {
+        var mask = 0;
+        if (!string.IsNullOrWhiteSpace(server.ScheduleServerBackupPath)) mask |= 1;
+        if (!string.IsNullOrWhiteSpace(server.WebApiHostBackupPath)) mask |= 2;
+        if (!string.IsNullOrWhiteSpace(server.WebClientBackupPath)) mask |= 4;
+        if (!string.IsNullOrWhiteSpace(server.WpfClientBackupPath)) mask |= 8;
+        return mask;
+    }
+
+    /// <summary>创建只包含指定应用目录的 ZIP，并返回实际写入的文件总数。</summary>
+    private static int CreateApplicationArchive(string dllRoot, string zipPath, int applicationMask)
+    {
+        var fileCount = 0;
+        using var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create);
+        for (var index = 0; index < DllProjectNames.Length; index++)
+        {
+            if ((applicationMask & (1 << index)) == 0) continue;
+            var applicationName = DllProjectNames[index];
+            var sourceDirectory = Path.Combine(dllRoot, applicationName);
+            archive.CreateEntry(applicationName + "/");
+            if (!Directory.Exists(sourceDirectory)) continue;
+            foreach (var file in Directory.EnumerateFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+            {
+                var relativePath = Path.GetRelativePath(sourceDirectory, file).Replace(Path.DirectorySeparatorChar, '/');
+                archive.CreateEntryFromFile(file, $"{applicationName}/{relativePath}", CompressionLevel.Optimal);
+                fileCount++;
+            }
+        }
+        return fileCount;
     }
 
     /// <summary>向一台服务器上传 SMOMDLL 压缩包，并返回该服务器的独立执行结果。</summary>
@@ -1060,7 +1130,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>一台服务器的 SMOMDLL 同步结果。</summary>
-    private sealed record SmomDllPublishResult(ServerProfile Server, bool Success, string Message, int FileCount = 0);
+    private sealed record SmomDllPublishResult(ServerProfile Server, bool Success, string Message, int FileCount = 0, bool Skipped = false);
 
     /// <summary>根据所选模式收集 DLL，并复制到程序目录下对应的 SMOMDLL 子目录。</summary>
     private async void GetDllButton_Click(object sender, RoutedEventArgs e)

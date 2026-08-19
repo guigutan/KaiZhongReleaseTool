@@ -12,11 +12,11 @@ using System.Reflection;
 
 [assembly: System.Reflection.AssemblyCompanyAttribute("KaiZhongReleaseTool.Server.Updater")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
-[assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.3.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.3+254be73b75a9bafbcd08a73f345bc2eb6c2e3b2e")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+51807f5c58c869690c5c936c084edb2f38f9ed6f")]
 [assembly: System.Reflection.AssemblyProductAttribute("KaiZhongReleaseTool.Server.Updater")]
 [assembly: System.Reflection.AssemblyTitleAttribute("KaiZhongReleaseTool.Server.Updater")]
-[assembly: System.Reflection.AssemblyVersionAttribute("1.0.3.0")]
+[assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
 
 // 由 MSBuild WriteCodeFragment 类生成。
 
